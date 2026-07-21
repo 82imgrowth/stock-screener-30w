@@ -48,6 +48,14 @@ def build_payload(weekly_ohlc: pd.DataFrame):
     if pd.isna(last_ma) or price <= last_ma:
         return None
 
+    # 30주선 상향돌파 후 연속으로 위에 머문 주 수 (MA 계산 가능 구간 내에서)
+    above = (close > ma30)[ma30.notna()]
+    weeks_above = 0
+    for is_above in reversed(above.tolist()):
+        if not is_above:
+            break
+        weeks_above += 1
+
     tail = weekly_ohlc.tail(CHART_WEEKS)
     candles = [
         {
@@ -70,6 +78,7 @@ def build_payload(weekly_ohlc: pd.DataFrame):
         "price": price,
         "ma30": round(float(last_ma), 2),
         "gap_pct": round((price / float(last_ma) - 1) * 100, 2),
+        "weeks_above": weeks_above,
         "chart": {"candles": candles, "ma30": ma_points},
     }
 
