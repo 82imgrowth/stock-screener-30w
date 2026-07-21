@@ -203,7 +203,8 @@ function openChart(s) {
   if (chart) { chart.remove(); chart = null; }
   box.textContent = "";
 
-  fetch(`charts/${s.code}.json`)
+  // 데이터 갱신 시각을 버전으로 붙여 갱신 때마다 새 URL로 요청 (캐시된 옛 차트 방지)
+  fetch(`charts/${s.code}.json?v=${encodeURIComponent(dataVersion)}`)
     .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
     .then(d => {
       if (!modal.classList.contains("open")) return;
@@ -271,10 +272,12 @@ new ResizeObserver(() => {
   }
 }).observe(document.getElementById("chart-box"));
 
-fetch("data.json")
+let dataVersion = "";
+fetch("data.json", { cache: "no-cache" })
   .then(r => r.json())
   .then(d => {
     stocks = d.stocks;
+    dataVersion = d.updated;
     document.getElementById("meta").textContent =
       `기준: ${d.updated} · 전체 ${fmt(d.total_scanned)}종목 중 ${fmt(d.count)}종목 (${(d.count / d.total_scanned * 100).toFixed(1)}%)이 30주선 위`;
     render();
