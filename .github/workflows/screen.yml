@@ -28,6 +28,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/data.json
+          git add docs
           git diff --cached --quiet || git commit -m "chore: update screening data $(date +'%Y-%m-%d')"
           git push
