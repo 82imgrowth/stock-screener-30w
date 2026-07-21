@@ -51,6 +51,35 @@
   a.stock-link:hover { color: var(--accent); text-decoration: underline; }
   .empty { padding: 40px; text-align: center; color: var(--muted); }
   .arrow { font-size: 0.7em; }
+  tbody tr { cursor: pointer; }
+
+  /* 차트 모달 */
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,0.55); align-items: center; justify-content: center; padding: 16px;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    width: 100%; max-width: 860px; overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .modal-head {
+    display: flex; align-items: center; gap: 10px; padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-head h2 { font-size: 1.05rem; }
+  .modal-head .sub { color: var(--muted); font-size: 0.82rem; }
+  .modal-head .gap-badge { color: var(--up); font-weight: 600; font-size: 0.9rem; }
+  .modal-head a { margin-left: auto; color: var(--accent); font-size: 0.82rem; text-decoration: none; }
+  .modal-close {
+    background: none; border: none; color: var(--muted); font-size: 1.4rem;
+    cursor: pointer; padding: 0 4px; line-height: 1;
+  }
+  .modal-close:hover { color: var(--text); }
+  #chart-box { width: 100%; height: 420px; }
+  .chart-hint { padding: 8px 18px 14px; color: var(--muted); font-size: 0.75rem; }
+  @media (max-width: 640px) { #chart-box { height: 300px; } }
 </style>
 </head>
 <body>
@@ -81,6 +110,21 @@
     </table>
   </div>
 </div>
+
+<div class="modal-backdrop" id="modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="m-name"></h2>
+      <span class="sub" id="m-code"></span>
+      <span class="gap-badge" id="m-gap"></span>
+      <a id="m-naver" href="#" target="_blank" rel="noopener">네이버 금융 ↗</a>
+      <button class="modal-close" id="m-close" aria-label="닫기">×</button>
+    </div>
+    <div id="chart-box"></div>
+    <div class="chart-hint">주봉 · 주황선 = 30주 이동평균 · 휠/핀치로 줌, 드래그로 기간 이동</div>
+  </div>
+</div>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 let stocks = [];
 let sortKey = "marcap", sortDesc = true;
@@ -113,8 +157,8 @@ function render() {
     return;
   }
   tbody.innerHTML = rows.map(s => `
-    <tr>
-      <td><a class="stock-link" href="https://finance.naver.com/item/main.naver?code=${s.code}" target="_blank" rel="noopener">${s.name}</a> <span class="mkt">${s.code}</span></td>
+    <tr data-code="${s.code}">
+      <td><span class="stock-link">${s.name}</span> <span class="mkt">${s.code}</span></td>
       <td class="mkt">${s.market}</td>
       <td>${fmt(s.price)}</td>
       <td>${fmt(Math.round(s.ma30))}</td>
@@ -133,6 +177,82 @@ document.querySelectorAll("thead th").forEach(th => {
 });
 document.getElementById("search").addEventListener("input", render);
 document.getElementById("market-filter").addEventListener("change", render);
+
+// ── 차트 모달 ──
+const modal = document.getElementById("modal");
+let chart = null;
+
+function themeColors() {
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const css = getComputedStyle(document.documentElement);
+  return {
+    bg: css.getPropertyValue("--card").trim(),
+    text: css.getPropertyValue("--muted").trim(),
+    grid: dark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)",
+  };
+}
+
+function openChart(s) {
+  document.getElementById("m-name").textContent = s.name;
+  document.getElementById("m-code").textContent = `${s.code} · ${s.market}`;
+  document.getElementById("m-gap").textContent = `30주선 +${s.gap_pct.toFixed(1)}%`;
+  document.getElementById("m-naver").href = `https://finance.naver.com/item/main.naver?code=${s.code}`;
+  modal.classList.add("open");
+
+  const box = document.getElementById("chart-box");
+  if (chart) { chart.remove(); chart = null; }
+  box.textContent = "";
+
+  fetch(`charts/${s.code}.json`)
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(d => {
+      if (!modal.classList.contains("open")) return;
+      const c = themeColors();
+      chart = LightweightCharts.createChart(box, {
+        layout: { background: { color: c.bg }, textColor: c.text },
+        grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+        rightPriceScale: { borderVisible: false },
+        timeScale: { borderVisible: false },
+        localization: { locale: "ko-KR", priceFormatter: p => p.toLocaleString("ko-KR") },
+      });
+      // 한국식 색상: 상승 빨강, 하락 파랑
+      chart.addCandlestickSeries({
+        upColor: "#e5484d", wickUpColor: "#e5484d", borderUpColor: "#e5484d",
+        downColor: "#3b82f6", wickDownColor: "#3b82f6", borderDownColor: "#3b82f6",
+      }).setData(d.candles);
+      chart.addLineSeries({
+        color: "#f59e0b", lineWidth: 2,
+        priceLineVisible: false, lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      }).setData(d.ma30);
+      // 초기 화면은 최근 1년, 이후 휠/드래그로 자유 조절
+      const from = d.candles[Math.max(0, d.candles.length - 52)].time;
+      chart.timeScale().setVisibleRange({ from, to: d.candles[d.candles.length - 1].time });
+    })
+    .catch(() => { box.innerHTML = '<div class="empty">차트 데이터를 불러오지 못했습니다</div>'; });
+}
+
+function closeChart() {
+  modal.classList.remove("open");
+  if (chart) { chart.remove(); chart = null; }
+}
+document.getElementById("m-close").addEventListener("click", closeChart);
+modal.addEventListener("click", e => { if (e.target === modal) closeChart(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeChart(); });
+
+document.getElementById("tbody").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-code]");
+  if (!tr) return;
+  const s = stocks.find(x => x.code === tr.dataset.code);
+  if (s) openChart(s);
+});
+
+new ResizeObserver(() => {
+  if (chart) {
+    const box = document.getElementById("chart-box");
+    chart.resize(box.clientWidth, box.clientHeight);
+  }
+}).observe(document.getElementById("chart-box"));
 
 fetch("data.json")
   .then(r => r.json())
