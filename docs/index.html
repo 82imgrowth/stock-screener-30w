@@ -121,7 +121,7 @@
       <button class="modal-close" id="m-close" aria-label="닫기">×</button>
     </div>
     <div id="chart-box"></div>
-    <div class="chart-hint">주봉 · 주황선 = 30주 이동평균 · 휠/핀치로 줌, 드래그로 기간 이동</div>
+    <div class="chart-hint">주봉 · 주황선 = 30주 이동평균 · 하단 막대 = 거래량 · 휠/핀치로 줌, 드래그로 기간 이동</div>
   </div>
 </div>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -220,6 +220,23 @@ function openChart(s) {
         upColor: "#e5484d", wickUpColor: "#e5484d", borderUpColor: "#e5484d",
         downColor: "#3b82f6", wickDownColor: "#3b82f6", borderDownColor: "#3b82f6",
       }).setData(d.candles);
+      // 거래량: 하단 20% 영역에 반투명 히스토그램
+      chart.addHistogramSeries({
+        priceFormat: { type: "volume" },
+        priceScaleId: "vol",
+        lastValueVisible: false, priceLineVisible: false,
+      }).setData(d.candles.map(c => ({
+        time: c.time,
+        value: c.volume || 0,
+        color: c.close >= c.open ? "rgba(229,72,77,0.4)" : "rgba(59,130,246,0.4)",
+      })));
+      chart.priceScale("vol").applyOptions({
+        scaleMargins: { top: 0.8, bottom: 0 },
+        visible: false,
+      });
+      chart.priceScale("right").applyOptions({
+        scaleMargins: { top: 0.05, bottom: 0.25 },
+      });
       chart.addLineSeries({
         color: "#f59e0b", lineWidth: 2,
         priceLineVisible: false, lastValueVisible: false,
