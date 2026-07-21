@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>30주선 위 종목 스크리너</title>
+<style>
+  :root {
+    --bg: #f7f8fa; --card: #fff; --text: #1a1d24; --muted: #6b7280;
+    --border: #e5e7eb; --accent: #2563eb; --up: #d92c2c; --hover: #f1f5f9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12141a; --card: #1c1f27; --text: #e7e9ee; --muted: #9aa1ad;
+      --border: #2c3038; --accent: #60a5fa; --up: #f87171; --hover: #262a33;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: "Pretendard", -apple-system, "Malgun Gothic", sans-serif;
+    background: var(--bg); color: var(--text); padding: 24px 16px; line-height: 1.5;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  .meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 16px; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  input[type="search"] {
+    flex: 1; min-width: 200px; padding: 10px 14px; font-size: 0.95rem;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text);
+  }
+  select {
+    padding: 10px 14px; font-size: 0.9rem; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--card); color: var(--text);
+  }
+  .table-box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 640px; }
+  th, td { padding: 10px 14px; text-align: right; white-space: nowrap; }
+  th:nth-child(1), td:nth-child(1), th:nth-child(2), td:nth-child(2) { text-align: left; }
+  thead th {
+    color: var(--muted); font-weight: 600; font-size: 0.8rem;
+    border-bottom: 1px solid var(--border); cursor: pointer; user-select: none;
+    position: sticky; top: 0; background: var(--card);
+  }
+  thead th:hover { color: var(--accent); }
+  tbody tr { border-bottom: 1px solid var(--border); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--hover); }
+  .gap { color: var(--up); font-weight: 600; }
+  .mkt { font-size: 0.75rem; color: var(--muted); }
+  a.stock-link { color: var(--text); text-decoration: none; font-weight: 500; }
+  a.stock-link:hover { color: var(--accent); text-decoration: underline; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  .arrow { font-size: 0.7em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>30주 이동평균선 위 종목</h1>
+  <div class="meta" id="meta">데이터 로딩 중...</div>
+  <div class="controls">
+    <input type="search" id="search" placeholder="종목명 또는 코드 검색">
+    <select id="market-filter">
+      <option value="">전체 시장</option>
+      <option value="KOSPI">코스피</option>
+      <option value="KOSDAQ">코스닥</option>
+    </select>
+  </div>
+  <div class="table-box">
+    <table>
+      <thead>
+        <tr>
+          <th data-key="name">종목명</th>
+          <th data-key="market">시장</th>
+          <th data-key="price">현재가</th>
+          <th data-key="ma30">30주선</th>
+          <th data-key="gap_pct">이격률 <span class="arrow" id="ar-gap_pct"></span></th>
+          <th data-key="marcap">시가총액 <span class="arrow" id="ar-marcap">▼</span></th>
+        </tr>
+      </thead>
+      <tbody id="tbody"><tr><td colspan="6" class="empty">로딩 중...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+<script>
+let stocks = [];
+let sortKey = "marcap", sortDesc = true;
+
+const fmt = n => n.toLocaleString("ko-KR");
+const fmtMarcap = n => {
+  const jo = Math.floor(n / 1e12), eok = Math.round((n % 1e12) / 1e8);
+  return jo > 0 ? `${jo}조 ${fmt(eok)}억` : `${fmt(eok)}억`;
+};
+
+function render() {
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  const mkt = document.getElementById("market-filter").value;
+  let rows = stocks.filter(s =>
+    (!mkt || s.market === mkt) &&
+    (!q || s.name.toLowerCase().includes(q) || s.code.includes(q))
+  );
+  rows.sort((a, b) => {
+    const va = a[sortKey], vb = b[sortKey];
+    const cmp = typeof va === "string" ? va.localeCompare(vb, "ko") : va - vb;
+    return sortDesc ? -cmp : cmp;
+  });
+  document.querySelectorAll(".arrow").forEach(el => el.textContent = "");
+  const ar = document.getElementById("ar-" + sortKey);
+  if (ar) ar.textContent = sortDesc ? "▼" : "▲";
+
+  const tbody = document.getElementById("tbody");
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">조건에 맞는 종목이 없습니다</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(s => `
+    <tr>
+      <td><a class="stock-link" href="https://finance.naver.com/item/main.naver?code=${s.code}" target="_blank" rel="noopener">${s.name}</a> <span class="mkt">${s.code}</span></td>
+      <td class="mkt">${s.market}</td>
+      <td>${fmt(s.price)}</td>
+      <td>${fmt(Math.round(s.ma30))}</td>
+      <td class="gap">+${s.gap_pct.toFixed(1)}%</td>
+      <td>${fmtMarcap(s.marcap)}</td>
+    </tr>`).join("");
+}
+
+document.querySelectorAll("thead th").forEach(th => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.key;
+    if (sortKey === key) sortDesc = !sortDesc;
+    else { sortKey = key; sortDesc = true; }
+    render();
+  });
+});
+document.getElementById("search").addEventListener("input", render);
+document.getElementById("market-filter").addEventListener("change", render);
+
+fetch("data.json")
+  .then(r => r.json())
+  .then(d => {
+    stocks = d.stocks;
+    document.getElementById("meta").textContent =
+      `기준: ${d.updated} · 전체 ${fmt(d.total_scanned)}종목 중 ${fmt(d.count)}종목 (${(d.count / d.total_scanned * 100).toFixed(1)}%)이 30주선 위`;
+    render();
+  })
+  .catch(() => {
+    document.getElementById("meta").textContent = "data.json을 불러오지 못했습니다. 스크리닝을 먼저 실행하세요.";
+    document.getElementById("tbody").innerHTML = '<tr><td colspan="6" class="empty">데이터 없음</td></tr>';
+  });
+</script>
+</body>
+</html>
