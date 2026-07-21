@@ -56,6 +56,7 @@ def build_payload(weekly_ohlc: pd.DataFrame):
             "high": round(float(r.High), 2),
             "low": round(float(r.Low), 2),
             "close": round(float(r.Close), 2),
+            "volume": int(r.Volume) if pd.notna(r.Volume) else 0,
         }
         for ts, r in tail.iterrows()
         if not (pd.isna(r.Open) or pd.isna(r.Close))
@@ -75,7 +76,7 @@ def build_payload(weekly_ohlc: pd.DataFrame):
 
 def weekly_from_daily(daily: pd.DataFrame) -> pd.DataFrame:
     return daily.resample("W-FRI").agg(
-        {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
+        {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
     ).dropna(how="all")
 
 
@@ -90,7 +91,7 @@ def check_adjusted(code: str, market: str):
         return None
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
-    return build_payload(df[["Open", "High", "Low", "Close"]])
+    return build_payload(df[["Open", "High", "Low", "Close", "Volume"]])
 
 
 def check_stock(code: str, market: str, start: str):
@@ -98,7 +99,7 @@ def check_stock(code: str, market: str, start: str):
         df = fdr.DataReader(code, start)
         if df.empty:
             return None
-        daily = df[["Open", "High", "Low", "Close"]].dropna(subset=["Close"])
+        daily = df[["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["Close"])
         max_move = daily["Close"].pct_change().abs().max()
         if pd.notna(max_move) and max_move > CORP_ACTION_THRESHOLD:
             # KRX 원주가는 기업 이벤트를 반영하지 않아 이동평균이 왜곡됨
