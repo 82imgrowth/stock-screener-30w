@@ -32,6 +32,8 @@ def get_listings() -> pd.DataFrame:
         df = df[["Code", "Name", "Market", "Close", "Marcap"]].copy()
         frames.append(df)
     merged = pd.concat(frames, ignore_index=True)
+    # 코스닥 글로벌 세그먼트는 코스닥 내 우량주 분류일 뿐이므로 코스닥으로 통합
+    merged["Market"] = merged["Market"].replace("KOSDAQ GLOBAL", "KOSDAQ")
     # 거래정지 등으로 Close가 0인 종목 제외
     merged = merged[merged["Close"] > 0]
     return merged
