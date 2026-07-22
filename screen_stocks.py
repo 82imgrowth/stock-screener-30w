@@ -20,6 +20,13 @@ WORKERS = 8
 # 한국 시장 가격제한폭(±30%)을 넘는 일간 변동은 감자/액면분할/거래정지 해제 등
 # 기업 이벤트 → KRX 원주가 기반 이동평균이 왜곡되므로 수정주가로 재검증 필요
 CORP_ACTION_THRESHOLD = 0.31
+# 30주선 추세 분석에 부적합한 ETF 유형 제외:
+#   - 인버스: 30주선 위 = 기초지수 하락 추세라 신호 해석이 반대
+#   - 채권/머니마켓/금리형: 가격이 사실상 단조 우상향이라 상시 30주선 위
+ETF_EXCLUDE = (
+    "인버스|채권|국채|회사채|크레딧|물가채|통안|머니마켓|MMF|파킹|"
+    "금리|KOFR|SOFR|양도성예금|초단기"
+)
 DOCS = Path(__file__).parent / "docs"
 OUT_PATH = DOCS / "data.json"
 CHART_DIR = DOCS / "charts"
@@ -31,6 +38,21 @@ def get_listings() -> pd.DataFrame:
         df = fdr.StockListing(market)
         df = df[["Code", "Name", "Market", "Close", "Marcap"]].copy()
         frames.append(df)
+
+    # ETF: 컬럼 체계가 달라 표준 스키마로 정규화 (Symbol→Code, Price→Close,
+    # MarCap은 억원 단위라 원 단위로 환산해 주식 Marcap과 통일)
+    etf = fdr.StockListing("ETF/KR")
+    etf = pd.DataFrame({
+        "Code": etf["Symbol"],
+        "Name": etf["Name"],
+        "Market": "ETF",
+        "Close": etf["Price"],
+        "Marcap": etf["MarCap"].fillna(0) * 10**8,
+    })
+    # 인버스·채권·머니마켓·금리형 ETF 제외
+    etf = etf[~etf["Name"].str.contains(ETF_EXCLUDE, regex=True, na=False)]
+    frames.append(etf)
+
     merged = pd.concat(frames, ignore_index=True)
     # 코스닥 글로벌 세그먼트는 코스닥 내 우량주 분류일 뿐이므로 코스닥으로 통합
     merged["Market"] = merged["Market"].replace("KOSDAQ GLOBAL", "KOSDAQ")
@@ -99,7 +121,8 @@ def check_adjusted(code: str, market: str):
     데이터를 아예 못 받으면(재시도 후에도) LookupError — 호출부에서
     '검증 불가'로 집계해 조용한 누락을 방지한다.
     """
-    suffix = ".KS" if market == "KOSPI" else ".KQ"
+    # 국내 ETF는 yfinance에서 대부분 .KS. 코스닥 종목만 .KQ.
+    suffix = ".KQ" if market == "KOSDAQ" else ".KS"
     last_err = None
     for attempt in range(2):
         try:
@@ -174,7 +197,7 @@ def main():
                         "code": row.Code,
                         "name": row.Name,
                         "market": row.Market,
-                        "marcap": int(row.Marcap),
+                        "marcap": int(row.Marcap or 0),
                         **res,
                     }
                 )
