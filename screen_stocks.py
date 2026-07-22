@@ -36,6 +36,8 @@ def get_listings() -> pd.DataFrame:
     merged["Market"] = merged["Market"].replace("KOSDAQ GLOBAL", "KOSDAQ")
     # 거래정지 등으로 Close가 0인 종목 제외
     merged = merged[merged["Close"] > 0]
+    # 스팩(기업인수목적회사)은 합병 대상 탐색용 페이퍼컴퍼니라 추세 분석 대상이 아님
+    merged = merged[~merged["Name"].str.contains("스팩", na=False)]
     return merged
 
 
