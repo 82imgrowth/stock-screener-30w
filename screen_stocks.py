@@ -92,32 +92,51 @@ def weekly_from_daily(daily: pd.DataFrame) -> pd.DataFrame:
 
 
 def check_adjusted(code: str, market: str):
-    """감자/액면분할 등이 감지된 종목을 yfinance 수정주가로 재검증."""
+    """감자/액면분할 등이 감지된 종목을 yfinance 수정주가로 재검증.
+
+    데이터를 아예 못 받으면(재시도 후에도) LookupError — 호출부에서
+    '검증 불가'로 집계해 조용한 누락을 방지한다.
+    """
     suffix = ".KS" if market == "KOSPI" else ".KQ"
-    df = yf.download(
-        code + suffix, period="4y", interval="1wk",
-        auto_adjust=True, progress=False,
-    )
-    if df is None or df.empty:
-        return None
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    return build_payload(df[["Open", "High", "Low", "Close", "Volume"]])
+    last_err = None
+    for attempt in range(2):
+        try:
+            df = yf.download(
+                code + suffix, period="4y", interval="1wk",
+                auto_adjust=True, progress=False,
+            )
+        except Exception as e:
+            last_err = e
+            time.sleep(2)
+            continue
+        if df is None or df.empty:
+            last_err = "empty"
+            time.sleep(2)
+            continue
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        return build_payload(df[["Open", "High", "Low", "Close", "Volume"]])
+    raise LookupError(f"yfinance 데이터 없음: {last_err}")
 
 
 def check_stock(code: str, market: str, start: str):
+    """반환: (결과 or None, 상태). 상태가 ok가 아니면 검증 불가로 집계."""
     try:
         df = fdr.DataReader(code, start)
         if df.empty:
-            return None
+            return None, "ok"  # 상장폐지 등 데이터 자체가 없는 정상 케이스
         daily = df[["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["Close"])
         max_move = daily["Close"].pct_change().abs().max()
         if pd.notna(max_move) and max_move > CORP_ACTION_THRESHOLD:
             # KRX 원주가는 기업 이벤트를 반영하지 않아 이동평균이 왜곡됨
-            return check_adjusted(code, market)
-        return build_payload(weekly_from_daily(daily))
-    except Exception:
-        return None
+            try:
+                return check_adjusted(code, market), "ok"
+            except LookupError:
+                return None, "unverified"
+        return build_payload(weekly_from_daily(daily)), "ok"
+    except Exception as e:
+        print(f"  [오류] {code}: {e!r}", file=sys.stderr)
+        return None, "error"
 
 
 def main():
@@ -130,6 +149,7 @@ def main():
 
     results = []
     charts = {}
+    unverified = []
     done = 0
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=WORKERS) as ex:
@@ -142,7 +162,9 @@ def main():
             done += 1
             if done % 200 == 0:
                 print(f"  {done}/{total} ({time.time() - t0:.0f}s)")
-            res = fut.result()
+            res, status = fut.result()
+            if status != "ok":
+                unverified.append({"code": row.Code, "name": row.Name, "reason": status})
             if res:
                 charts[row.Code] = res.pop("chart")
                 results.append(
@@ -160,6 +182,7 @@ def main():
         "updated": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "total_scanned": total,
         "count": len(results),
+        "unverified": unverified,
         "stocks": results,
     }
     DOCS.mkdir(exist_ok=True)
@@ -175,6 +198,10 @@ def main():
         )
     print(f"완료: {len(results)}/{total} 종목이 30주선 위 → {OUT_PATH}")
     print(f"차트 파일 {len(charts)}개 생성 → {CHART_DIR}")
+    if unverified:
+        print(f"[주의] 검증 불가 {len(unverified)}종목 (데이터 오류로 판정 제외):")
+        for u in unverified:
+            print(f"  {u['code']} {u['name']} ({u['reason']})")
 
 
 if __name__ == "__main__":

@@ -280,8 +280,14 @@ fetch("data.json", { cache: "no-cache" })
   .then(d => {
     stocks = d.stocks;
     dataVersion = d.updated;
-    document.getElementById("meta").textContent =
+    let metaText =
       `기준: ${d.updated} · 전체 ${fmt(d.total_scanned)}종목 중 ${fmt(d.count)}종목 (${(d.count / d.total_scanned * 100).toFixed(1)}%)이 30주선 위`;
+    const meta = document.getElementById("meta");
+    if (d.unverified && d.unverified.length) {
+      metaText += ` · ⚠ 데이터 오류로 판정 못한 종목 ${d.unverified.length}개`;
+      meta.title = d.unverified.map(u => `${u.name}(${u.code})`).join(", ");
+    }
+    meta.textContent = metaText;
     render();
   })
   .catch(() => {
