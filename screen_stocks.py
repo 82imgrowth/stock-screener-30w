@@ -3,6 +3,7 @@
 통과 종목은 웹 차트용 주봉 데이터(docs/charts/{code}.json)도 함께 생성한다.
 """
 import json
+import re
 import shutil
 import sys
 import time
@@ -20,13 +21,62 @@ WORKERS = 8
 # 한국 시장 가격제한폭(±30%)을 넘는 일간 변동은 감자/액면분할/거래정지 해제 등
 # 기업 이벤트 → KRX 원주가 기반 이동평균이 왜곡되므로 수정주가로 재검증 필요
 CORP_ACTION_THRESHOLD = 0.31
-# 30주선 추세 분석에 부적합한 ETF 유형 제외:
+# 30주선 추세 분석에 부적합하거나 사용자가 제외 요청한 ETF 유형:
 #   - 인버스: 30주선 위 = 기초지수 하락 추세라 신호 해석이 반대
 #   - 채권/머니마켓/금리형: 가격이 사실상 단조 우상향이라 상시 30주선 위
+#   - 미국 등 해외주식 / 원자재 / 레버리지: 사용자 요청으로 제외 (국내 종목만)
+# 주의:
+#   - '금'은 금융, '은'은 은행을 오탐하므로 원자재는 정밀 키워드만 사용
+#   - '글로벌'은 국내 '코스닥글로벌'을 오탐하지 않게 lookbehind로 제외
+#   - '니케이/TOPIX'는 '커뮤니케이션'을 오탐하므로 '일본'으로 대체
+#   - MSCI Korea(국내)는 유지되도록 'MSCI' 단독 대신 국가/지역명으로 매칭
 ETF_EXCLUDE = (
-    "인버스|채권|국채|회사채|크레딧|물가채|통안|머니마켓|MMF|파킹|"
-    "금리|KOFR|SOFR|양도성예금|초단기"
+    # 채권·머니마켓·금리형 (○○채는 '채권'이 아니라 '채'로 끝나 별도 매칭)
+    "인버스|채권|국채|국고채|국공채|회사채|금융채|은행채|특수채|여전채|카드채|"
+    "공사채|전단채|크레딧|물가채|통안|머니마켓|MMF|파킹|"
+    "금리|KOFR|SOFR|양도성예금|초단기|"
+    # 레버리지
+    "레버리지|2X|3X|"
+    # 원자재
+    "원유|WTI|천연가스|천연자원|원자재|농산물|옥수수|콩선물|니켈|팔라듐|"
+    "백금|귀금속|커머디티|골드|은선물|구리|KRX금|금현물|금선물|국제금|금액티브|"
+    # 미국 주식
+    "미국|S&P|나스닥|다우|필라델피아|러셀|"
+    # 기타 해외주식 (글로벌은 코스닥글로벌 보호)
+    r"(?<!코스닥)글로벌|월드|해외|중국|차이나|본토|과창판|심천|항셍|HSCEI|CSI|"
+    "ChiNext|A50|일본|유럽|유로|독일|DAX|인도|베트남|VN30|신흥국|선진|이머징|"
+    "MSCI EM|러시아|멕시코|필리핀|아시아|대만|라틴|브라질|홍콩|태국|사우디|싱가포르"
 )
+
+# 사용자 요청 추가 제외: 시장/규모 지수 추종 · TR(토탈리턴) · 커버드콜 · 배당형.
+# 지수형 = 시장/규모 대표지수어를 포함하되 섹터/테마 수식어가 없는 것
+#   (예: 'KODEX 200'·'코스닥150'=제외, 'TIGER 200 IT'·'코스닥150바이오테크'=섹터라 유지)
+ETF_MARKET_INDEX = re.compile(
+    r"코스피|코스닥|\bKRX\d|MSCI|(?<!\d)200(?!\d)|K200|"
+    r"대형주|중형주|중소형|소형주|코리아TOP10"
+)
+ETF_SECTOR_HINT = re.compile(
+    r"IT|금융|건설|소비재|산업재|에너지|중공업|철강|소재|헬스케어|커뮤니케이션|"
+    r"반도체|바이오|2차전지|게임|인터넷|조선|방산|원자력|자동차|증권|은행|미디어|"
+    r"소프트|전력|로봇|수출|휴머노이드|고배당|기후"
+)
+ETF_TR = re.compile(r"TR(?![A-Za-z])")  # 뒤에 영문자 없는 TR만 → 'TREX'·'TRF'는 오탐 안 됨
+# 자산배분/혼합형: 채권·해외자산이 섞여 한국 섹터/테마 주식 ETF가 아님
+#   TDF(은퇴시점) · TRF(위험조절) · TIF(인출) · 멀티에셋 · 주식혼합
+ETF_ALLOCATION = re.compile(r"TDF|TRF|TIF|멀티에셋|혼합")
+
+
+def etf_extra_excluded(name: str) -> bool:
+    is_index = bool(ETF_MARKET_INDEX.search(name)) and not ETF_SECTOR_HINT.search(name)
+    return (
+        is_index
+        or bool(ETF_TR.search(name))
+        or bool(ETF_ALLOCATION.search(name))
+        or "커버드콜" in name
+        or "배당" in name
+    )
+
+
 DOCS = Path(__file__).parent / "docs"
 OUT_PATH = DOCS / "data.json"
 CHART_DIR = DOCS / "charts"
@@ -49,8 +99,10 @@ def get_listings() -> pd.DataFrame:
         "Close": etf["Price"],
         "Marcap": etf["MarCap"].fillna(0) * 10**8,
     })
-    # 인버스·채권·머니마켓·금리형 ETF 제외
+    # 인버스·채권·머니마켓·금리형·해외·원자재·레버리지 ETF 제외
     etf = etf[~etf["Name"].str.contains(ETF_EXCLUDE, regex=True, na=False)]
+    # 시장/규모 지수 추종·TR·커버드콜·배당형 ETF 제외
+    etf = etf[~etf["Name"].apply(etf_extra_excluded)]
     frames.append(etf)
 
     merged = pd.concat(frames, ignore_index=True)
