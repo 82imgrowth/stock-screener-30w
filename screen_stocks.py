@@ -3,6 +3,7 @@
 통과 종목은 웹 차트용 주봉 데이터(docs/charts/{code}.json)도 함께 생성한다.
 """
 import json
+import re
 import shutil
 import sys
 import time
@@ -46,6 +47,27 @@ ETF_EXCLUDE = (
     "ChiNext|A50|일본|유럽|유로|독일|DAX|인도|베트남|VN30|신흥국|선진|이머징|"
     "MSCI EM|러시아|멕시코|필리핀|아시아|대만|라틴|브라질|홍콩|태국|사우디"
 )
+
+# 사용자 요청 추가 제외: 시장/규모 지수 추종 · TR(토탈리턴) · 커버드콜 · 배당형.
+# 지수형 = 시장/규모 대표지수어를 포함하되 섹터/테마 수식어가 없는 것
+#   (예: 'KODEX 200'·'코스닥150'=제외, 'TIGER 200 IT'·'코스닥150바이오테크'=섹터라 유지)
+ETF_MARKET_INDEX = re.compile(
+    r"코스피|코스닥|\bKRX\d|MSCI|(?<!\d)200(?!\d)|K200|"
+    r"대형주|중형주|중소형|소형주|코리아TOP10"
+)
+ETF_SECTOR_HINT = re.compile(
+    r"IT|금융|건설|소비재|산업재|에너지|중공업|철강|소재|헬스케어|커뮤니케이션|"
+    r"반도체|바이오|2차전지|게임|인터넷|조선|방산|원자력|자동차|증권|은행|미디어|"
+    r"소프트|전력|로봇|수출|휴머노이드|고배당|기후"
+)
+ETF_TR = re.compile(r"TR(?![A-Za-z])")  # 뒤에 영문자 없는 TR만 → 'TREX'·'TRF'는 오탐 안 됨
+
+
+def etf_extra_excluded(name: str) -> bool:
+    is_index = bool(ETF_MARKET_INDEX.search(name)) and not ETF_SECTOR_HINT.search(name)
+    return is_index or bool(ETF_TR.search(name)) or "커버드콜" in name or "배당" in name
+
+
 DOCS = Path(__file__).parent / "docs"
 OUT_PATH = DOCS / "data.json"
 CHART_DIR = DOCS / "charts"
@@ -68,8 +90,10 @@ def get_listings() -> pd.DataFrame:
         "Close": etf["Price"],
         "Marcap": etf["MarCap"].fillna(0) * 10**8,
     })
-    # 인버스·채권·머니마켓·금리형 ETF 제외
+    # 인버스·채권·머니마켓·금리형·해외·원자재·레버리지 ETF 제외
     etf = etf[~etf["Name"].str.contains(ETF_EXCLUDE, regex=True, na=False)]
+    # 시장/규모 지수 추종·TR·커버드콜·배당형 ETF 제외
+    etf = etf[~etf["Name"].apply(etf_extra_excluded)]
     frames.append(etf)
 
     merged = pd.concat(frames, ignore_index=True)
