@@ -45,7 +45,7 @@ ETF_EXCLUDE = (
     # 기타 해외주식 (글로벌은 코스닥글로벌 보호)
     r"(?<!코스닥)글로벌|월드|해외|중국|차이나|본토|과창판|심천|항셍|HSCEI|CSI|"
     "ChiNext|A50|일본|유럽|유로|독일|DAX|인도|베트남|VN30|신흥국|선진|이머징|"
-    "MSCI EM|러시아|멕시코|필리핀|아시아|대만|라틴|브라질|홍콩|태국|사우디"
+    "MSCI EM|러시아|멕시코|필리핀|아시아|대만|라틴|브라질|홍콩|태국|사우디|싱가포르"
 )
 
 # 사용자 요청 추가 제외: 시장/규모 지수 추종 · TR(토탈리턴) · 커버드콜 · 배당형.
@@ -61,11 +61,20 @@ ETF_SECTOR_HINT = re.compile(
     r"소프트|전력|로봇|수출|휴머노이드|고배당|기후"
 )
 ETF_TR = re.compile(r"TR(?![A-Za-z])")  # 뒤에 영문자 없는 TR만 → 'TREX'·'TRF'는 오탐 안 됨
+# 자산배분/혼합형: 채권·해외자산이 섞여 한국 섹터/테마 주식 ETF가 아님
+#   TDF(은퇴시점) · TRF(위험조절) · TIF(인출) · 멀티에셋 · 주식혼합
+ETF_ALLOCATION = re.compile(r"TDF|TRF|TIF|멀티에셋|혼합")
 
 
 def etf_extra_excluded(name: str) -> bool:
     is_index = bool(ETF_MARKET_INDEX.search(name)) and not ETF_SECTOR_HINT.search(name)
-    return is_index or bool(ETF_TR.search(name)) or "커버드콜" in name or "배당" in name
+    return (
+        is_index
+        or bool(ETF_TR.search(name))
+        or bool(ETF_ALLOCATION.search(name))
+        or "커버드콜" in name
+        or "배당" in name
+    )
 
 
 DOCS = Path(__file__).parent / "docs"
