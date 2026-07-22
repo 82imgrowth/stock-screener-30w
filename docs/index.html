@@ -35,13 +35,16 @@
   .table-box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 640px; }
   th, td { padding: 10px 14px; text-align: right; white-space: nowrap; }
-  th:nth-child(1), td:nth-child(1), th:nth-child(2), td:nth-child(2) { text-align: left; }
+  th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3) { text-align: left; }
   thead th {
     color: var(--muted); font-weight: 600; font-size: 0.8rem;
     border-bottom: 1px solid var(--border); cursor: pointer; user-select: none;
     position: sticky; top: 0; background: var(--card);
   }
   thead th:hover { color: var(--accent); }
+  .num-col { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; padding-right: 4px; width: 1%; }
+  thead th.num-col { cursor: default; }
+  thead th.num-col:hover { color: var(--muted); }
   tbody tr { border-bottom: 1px solid var(--border); }
   tbody tr:last-child { border-bottom: none; }
   tbody tr:hover { background: var(--hover); }
@@ -98,6 +101,7 @@
     <table>
       <thead>
         <tr>
+          <th class="num-col">#</th>
           <th data-key="name">종목명</th>
           <th data-key="market">시장</th>
           <th data-key="price">현재가</th>
@@ -107,7 +111,7 @@
           <th data-key="marcap">시가총액 <span class="arrow" id="ar-marcap">▼</span></th>
         </tr>
       </thead>
-      <tbody id="tbody"><tr><td colspan="7" class="empty">로딩 중...</td></tr></tbody>
+      <tbody id="tbody"><tr><td colspan="8" class="empty">로딩 중...</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -154,11 +158,12 @@ function render() {
 
   const tbody = document.getElementById("tbody");
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">조건에 맞는 종목이 없습니다</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">조건에 맞는 종목이 없습니다</td></tr>';
     return;
   }
-  tbody.innerHTML = rows.map(s => `
+  tbody.innerHTML = rows.map((s, i) => `
     <tr data-code="${s.code}">
+      <td class="num-col">${i + 1}</td>
       <td><span class="stock-link">${s.name}</span> <span class="mkt">${s.code}</span></td>
       <td class="mkt">${s.market}</td>
       <td>${fmt(s.price)}</td>
@@ -172,6 +177,7 @@ function render() {
 document.querySelectorAll("thead th").forEach(th => {
   th.addEventListener("click", () => {
     const key = th.dataset.key;
+    if (!key) return;  // # 열은 정렬 대상 아님
     if (sortKey === key) sortDesc = !sortDesc;
     else { sortKey = key; sortDesc = true; }
     render();
@@ -292,7 +298,7 @@ fetch("data.json", { cache: "no-cache" })
   })
   .catch(() => {
     document.getElementById("meta").textContent = "data.json을 불러오지 못했습니다. 스크리닝을 먼저 실행하세요.";
-    document.getElementById("tbody").innerHTML = '<tr><td colspan="7" class="empty">데이터 없음</td></tr>';
+    document.getElementById("tbody").innerHTML = '<tr><td colspan="8" class="empty">데이터 없음</td></tr>';
   });
 </script>
 </body>
