@@ -42,9 +42,15 @@
     position: sticky; top: 0; background: var(--card);
   }
   thead th:hover { color: var(--accent); }
-  .num-col { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; padding-right: 4px; width: 1%; }
+  .num-col { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; padding-right: 4px; width: 1%; white-space: nowrap; }
   thead th.num-col { cursor: default; }
   thead th.num-col:hover { color: var(--muted); }
+  /* 신규 진입(이번 주 30주선 상향돌파) 표시 */
+  .new-badge {
+    display: inline-block; margin-right: 6px; padding: 1px 5px;
+    font-size: 0.62rem; font-weight: 700; letter-spacing: 0.03em; line-height: 1.4;
+    color: #fff; background: var(--up); border-radius: 4px; vertical-align: middle;
+  }
   tbody tr { border-bottom: 1px solid var(--border); }
   tbody tr:last-child { border-bottom: none; }
   tbody tr:hover { background: var(--hover); }
@@ -164,7 +170,7 @@ function render() {
   }
   tbody.innerHTML = rows.map((s, i) => `
     <tr data-code="${s.code}">
-      <td class="num-col">${i + 1}</td>
+      <td class="num-col">${s.weeks_above === 1 ? '<span class="new-badge">NEW</span>' : ''}${i + 1}</td>
       <td><span class="stock-link">${s.name}</span> <span class="mkt">${s.code}</span></td>
       <td class="mkt">${s.market}</td>
       <td>${fmt(s.price)}</td>
