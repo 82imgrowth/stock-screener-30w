@@ -147,6 +147,14 @@ const fmtMarcap = n => {
   return jo > 0 ? `${jo}조 ${fmt(eok)}억` : `${fmt(eok)}억`;
 };
 
+// 30주선에 진입한 지 3일 이내면 NEW (진입 당일 = 0일차)
+const NEW_DAYS = 3;
+function isNew(s) {
+  if (!s.since) return false;
+  const days = (Date.now() - new Date(s.since + "T00:00:00").getTime()) / 86400000;
+  return days >= 0 && days < NEW_DAYS;
+}
+
 function render() {
   const q = document.getElementById("search").value.trim().toLowerCase();
   const mkt = document.getElementById("market-filter").value;
@@ -170,7 +178,7 @@ function render() {
   }
   tbody.innerHTML = rows.map((s, i) => `
     <tr data-code="${s.code}">
-      <td class="num-col">${s.weeks_above === 1 ? '<span class="new-badge">NEW</span>' : ''}${i + 1}</td>
+      <td class="num-col">${isNew(s) ? '<span class="new-badge">NEW</span>' : ''}${i + 1}</td>
       <td><span class="stock-link">${s.name}</span> <span class="mkt">${s.code}</span></td>
       <td class="mkt">${s.market}</td>
       <td>${fmt(s.price)}</td>
