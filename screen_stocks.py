@@ -259,6 +259,29 @@ def main():
                     }
                 )
 
+    # 이전 실행 결과와 비교해 '최초 진입일(since)'을 유지 — 웹에서 최근 진입 종목에
+    # NEW 배지를 띄우는 근거. 계속 30주선 위면 날짜를 보존하고, 이탈했다 재진입하면
+    # 새 날짜로 갱신된다(직전 결과에 없으면 오늘이 최초 진입일).
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    prev_since = {}
+    if OUT_PATH.exists():
+        try:
+            prev = json.loads(OUT_PATH.read_text(encoding="utf-8"))
+            prev_since = {s["code"]: s.get("since") for s in prev.get("stocks", [])}
+        except (json.JSONDecodeError, KeyError):
+            pass
+    for s in results:
+        if s["code"] not in prev_since:
+            s["since"] = today  # 직전 결과에 없던 종목 = 오늘 신규 진입
+        else:
+            # 이미 있던 종목: 기록된 날짜 유지. since 도입 전 데이터는 기간(주)으로
+            # 역산해 채워, 최초 배포 때 전 종목이 NEW로 뜨는 것을 방지한다.
+            weeks = max(int(s.get("weeks_above") or 1) - 1, 0)
+            s["since"] = prev_since[s["code"]] or (
+                now - timedelta(weeks=weeks)
+            ).strftime("%Y-%m-%d")
+
     results.sort(key=lambda x: x["marcap"], reverse=True)
     out = {
         "updated": datetime.now().strftime("%Y-%m-%d %H:%M"),
