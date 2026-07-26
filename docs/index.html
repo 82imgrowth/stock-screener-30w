@@ -45,7 +45,20 @@
   .num-col { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; padding-right: 4px; width: 1%; white-space: nowrap; }
   thead th.num-col { cursor: default; }
   thead th.num-col:hover { color: var(--muted); }
-  /* 신규 진입(이번 주 30주선 상향돌파) 표시 */
+  #new-only {
+    padding: 10px 14px; font-size: 0.9rem; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card); color: var(--muted);
+  }
+  #new-only:hover { color: var(--text); }
+  #new-only[aria-pressed="true"] { background: var(--up); border-color: var(--up); color: #fff; font-weight: 600; }
+  tbody tr.is-new { background: rgba(217, 44, 44, 0.06); }
+  tbody tr.is-new:hover { background: rgba(217, 44, 44, 0.12); }
+  @media (prefers-color-scheme: dark) {
+    tbody tr.is-new { background: rgba(248, 113, 113, 0.10); }
+    tbody tr.is-new:hover { background: rgba(248, 113, 113, 0.18); }
+  }
+  /* 신규 진입(최근 3일 내 30주선 상향돌파) 표시 */
   .new-badge {
     display: inline-block; margin-right: 6px; padding: 1px 5px;
     font-size: 0.62rem; font-weight: 700; letter-spacing: 0.03em; line-height: 1.4;
@@ -103,6 +116,7 @@
       <option value="KOSDAQ">코스닥</option>
       <option value="ETF">ETF</option>
     </select>
+    <button type="button" id="new-only" aria-pressed="false">NEW만 보기</button>
   </div>
   <div class="table-box">
     <table>
@@ -149,6 +163,7 @@ const fmtMarcap = n => {
 
 // 30주선에 진입한 지 3일 이내면 NEW (진입 당일 = 0일차)
 const NEW_DAYS = 3;
+let newOnly = false;
 function isNew(s) {
   if (!s.since) return false;
   const days = (Date.now() - new Date(s.since + "T00:00:00").getTime()) / 86400000;
@@ -160,6 +175,7 @@ function render() {
   const mkt = document.getElementById("market-filter").value;
   let rows = stocks.filter(s =>
     (!mkt || s.market === mkt) &&
+    (!newOnly || isNew(s)) &&
     (!q || s.name.toLowerCase().includes(q) || s.code.includes(q))
   );
   rows.sort((a, b) => {
@@ -177,7 +193,7 @@ function render() {
     return;
   }
   tbody.innerHTML = rows.map((s, i) => `
-    <tr data-code="${s.code}">
+    <tr data-code="${s.code}"${isNew(s) ? ' class="is-new"' : ''}>
       <td class="num-col">${isNew(s) ? '<span class="new-badge">NEW</span>' : ''}${i + 1}</td>
       <td><span class="stock-link">${s.name}</span> <span class="mkt">${s.code}</span></td>
       <td class="mkt">${s.market}</td>
@@ -200,6 +216,11 @@ document.querySelectorAll("thead th").forEach(th => {
 });
 document.getElementById("search").addEventListener("input", render);
 document.getElementById("market-filter").addEventListener("change", render);
+document.getElementById("new-only").addEventListener("click", e => {
+  newOnly = !newOnly;
+  e.currentTarget.setAttribute("aria-pressed", String(newOnly));
+  render();
+});
 
 // ── 차트 모달 ──
 const modal = document.getElementById("modal");
@@ -301,8 +322,10 @@ fetch("data.json", { cache: "no-cache" })
   .then(d => {
     stocks = d.stocks;
     dataVersion = d.updated;
+    const newCount = stocks.filter(isNew).length;
     let metaText =
       `기준: ${d.updated} · 전체 ${fmt(d.total_scanned)}종목 중 ${fmt(d.count)}종목 (${(d.count / d.total_scanned * 100).toFixed(1)}%)이 30주선 위`;
+    if (newCount) metaText += ` · 최근 3일 신규 진입 ${fmt(newCount)}종목`;
     const meta = document.getElementById("meta");
     if (d.unverified && d.unverified.length) {
       metaText += ` · ⚠ 데이터 오류로 판정 못한 종목 ${d.unverified.length}개`;
