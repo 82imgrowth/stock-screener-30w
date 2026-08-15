@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>섹터/테마 히트맵 · 30주선 위 종목</title>
+<style>
+  :root {
+    --bg: #f7f8fa; --card: #fff; --text: #1a1d24; --muted: #6b7280;
+    --border: #e5e7eb; --accent: #2563eb; --up: #d92c2c; --down: #3b82f6; --hover: #f1f5f9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12141a; --card: #1c1f27; --text: #e7e9ee; --muted: #9aa1ad;
+      --border: #2c3038; --accent: #60a5fa; --up: #f87171; --down: #60a5fa; --hover: #262a33;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: "Pretendard", -apple-system, "Malgun Gothic", sans-serif;
+    background: var(--bg); color: var(--text); padding: 24px 16px; line-height: 1.5;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  .topnav { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+  .topnav a {
+    padding: 8px 16px; font-size: 0.92rem; font-weight: 600; text-decoration: none;
+    color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .topnav a:hover { color: var(--text); }
+  .topnav a.active { color: var(--accent); border-bottom-color: var(--accent); }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  .meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 14px; }
+
+  .crumb { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; min-height: 34px; flex-wrap: wrap; }
+  .crumb button {
+    padding: 6px 12px; font-size: 0.85rem; cursor: pointer; color: var(--muted);
+    background: var(--card); border: 1px solid var(--border); border-radius: 7px;
+  }
+  .crumb button:hover { color: var(--text); }
+  .crumb .cur { font-weight: 700; font-size: 1rem; }
+  .crumb .cnt { color: var(--muted); font-size: 0.85rem; }
+
+  /* 히트맵 */
+  #heatmap { position: relative; width: 100%; height: 620px; background: var(--border); border-radius: 10px; overflow: hidden; }
+  /* 섹터 화면은 가로 배열을 유지하되 면적을 키워 종목 수 대비를 살린다 */
+  #heatmap.sector-view { height: 840px; }
+  .tile {
+    position: absolute; overflow: hidden; cursor: pointer;
+    border: 1px solid rgba(0,0,0,0.25);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #fff; text-align: center; padding: 2px; transition: filter .12s;
+  }
+  .tile:hover { filter: brightness(1.25); z-index: 5; }
+  .tile .t-name { font-weight: 700; line-height: 1.08; word-break: break-all; }
+  .tile .t-val { opacity: .9; line-height: 1.2; }
+  /* 최근 3일 내 30주선 진입 종목 */
+  .tile-new { outline: 2px solid #ffd400; outline-offset: -2px; }
+  .tile-new::after {              /* 타일이 작아 글자를 못 넣을 때도 보이는 표식 */
+    content: ""; position: absolute; top: 0; right: 0;
+    border-width: 0 9px 9px 0; border-style: solid;
+    border-color: transparent #ffd400 transparent transparent;
+  }
+  .tile .t-new {
+    font-size: 8px; font-weight: 800; letter-spacing: .04em;
+    background: #ffd400; color: #1a1d24; padding: 0 4px; border-radius: 3px; margin-bottom: 2px;
+  }
+  .legend { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 0.75rem; color: var(--muted); flex-wrap: wrap; }
+  .legend i { width: 22px; height: 11px; display: inline-block; border-radius: 2px; }
+  #scale-toggle {
+    padding: 3px 9px; font-size: 0.72rem; cursor: pointer; color: var(--muted);
+    background: var(--card); border: 1px solid var(--border); border-radius: 6px;
+  }
+  #scale-toggle:hover { color: var(--text); }
+  #scale-toggle[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  @media (max-width: 640px) { #heatmap { height: 460px; } }
+
+  /* 차트 모달 (30Weeks 페이지와 동일) */
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,0.55); align-items: center; justify-content: center; padding: 16px;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    width: 100%; max-width: 860px; overflow: hidden; display: flex; flex-direction: column;
+  }
+  .modal-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .modal-head h2 { font-size: 1.05rem; }
+  .modal-head .sub { color: var(--muted); font-size: 0.82rem; }
+  .modal-head .gap-badge { color: var(--up); font-weight: 600; font-size: 0.9rem; }
+  .modal-head a { margin-left: auto; color: var(--accent); font-size: 0.82rem; text-decoration: none; }
+  .modal-close { background: none; border: none; color: var(--muted); font-size: 1.4rem; cursor: pointer; padding: 0 4px; line-height: 1; }
+  .modal-close:hover { color: var(--text); }
+  #chart-box { width: 100%; height: 420px; }
+  .chart-hint { padding: 8px 18px 14px; color: var(--muted); font-size: 0.75rem; }
+  @media (max-width: 640px) { #chart-box { height: 300px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="topnav">
+    <a href="index.html">30Weeks</a>
+    <a href="sector.html" class="active">섹터/테마</a>
+  </nav>
+  <h1>섹터/테마 히트맵</h1>
+  <div class="meta" id="meta">데이터 로딩 중...</div>
+  <div class="crumb" id="crumb"></div>
+  <div id="heatmap"></div>
+  <div class="legend">
+    <span id="size-label">타일 크기 = 종목 수</span>
+    <button id="scale-toggle" type="button">보정 보기</button>
+    <span>·</span>
+    <span>색 = 등락률</span>
+    <i style="background:#1f6fd0"></i><span>하락</span>
+    <i style="background:#4a4f5a"></i><span>보합</span>
+    <i style="background:#c0392b"></i><span>상승</span>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="m-name"></h2>
+      <span class="sub" id="m-code"></span>
+      <span class="gap-badge" id="m-gap"></span>
+      <a id="m-naver" href="#" target="_blank" rel="noopener">네이버 금융 ↗</a>
+      <button class="modal-close" id="m-close" aria-label="닫기">×</button>
+    </div>
+    <div id="chart-box"></div>
+    <div class="chart-hint">주봉 · 주황선 = 30주 이동평균 · 하단 막대 = 거래량 · 휠/핀치로 줌, 드래그로 기간 이동</div>
+  </div>
+</div>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+let stocks = [], dataVersion = "", currentSector = null;
+// 섹터 화면: 크기 = 종목 수 (어느 섹터에 30주선 위 종목이 몰렸는지 = 섹터 강도)
+// 종목 화면: 크기 = 시가총액. 대형주 쏠림이 심하면 sqrt 보정으로 압축(순서는 유지)
+let sqrtScale = true;
+const areaOf = cap => (sqrtScale ? Math.sqrt(cap) : cap);
+
+// 종목 수가 적은 섹터는 최소 블럭으로 눌러 큰 섹터의 시각적 대비를 살린다.
+const MINOR_MAX = 5;      // 이하면 최소 블럭
+const MINOR_UNIT = 0.45;  // 최소 블럭의 크기 가중치(종목 수 환산)
+
+const NEW_DAYS = 3;
+function isNew(s) {
+  if (!s.since) return false;
+  const d = (Date.now() - new Date(s.since + "T00:00:00").getTime()) / 86400000;
+  return d >= 0 && d < NEW_DAYS;
+}
+
+const fmt = n => n.toLocaleString("ko-KR");
+const fmtMarcap = n => {
+  const jo = Math.floor(n / 1e12), eok = Math.round((n % 1e12) / 1e8);
+  return jo > 0 ? `${jo}조 ${fmt(eok)}억` : `${fmt(eok)}억`;
+};
+
+// 등락률 → 색. 한국식(상승 빨강/하락 파랑), ±3%에서 채도 최대
+function heatColor(pct) {
+  const t = Math.min(Math.abs(pct) / 3, 1);
+  const mix = (a, b) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+  const flat = [74, 79, 90];
+  const c = pct >= 0 ? mix(flat, [192, 57, 43]) : mix(flat, [31, 111, 208]);
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+
+/* squarified treemap: 값 내림차순 items를 rect 안에 채워 위치 계산 */
+function squarify(items, x, y, w, h) {
+  const out = [];
+  const total = items.reduce((s, d) => s + d.value, 0);
+  if (!total) return out;
+  let list = items.map(d => ({ ...d, area: d.value / total * w * h }));
+  const worst = (row, len) => {
+    const s = row.reduce((a, b) => a + b.area, 0);
+    const mx = Math.max(...row.map(r => r.area)), mn = Math.min(...row.map(r => r.area));
+    return Math.max(len * len * mx / (s * s), (s * s) / (len * len * mn));
+  };
+  let rx = x, ry = y, rw = w, rh = h;
+  while (list.length) {
+    const vertical = rw >= rh;      // 짧은 변 기준으로 줄을 쌓는다
+    const len = vertical ? rh : rw;
+    const row = [list.shift()];
+    while (list.length && worst(row, len) >= worst([...row, list[0]], len)) row.push(list.shift());
+    const rowArea = row.reduce((a, b) => a + b.area, 0);
+    const thick = rowArea / len;
+    let off = vertical ? ry : rx;
+    for (const it of row) {
+      const side = it.area / thick;
+      out.push(vertical
+        ? { ...it, x: rx, y: off, w: thick, h: side }
+        : { ...it, x: off, y: ry, w: side, h: thick });
+      off += side;
+    }
+    if (vertical) { rx += thick; rw -= thick; } else { ry += thick; rh -= thick; }
+    if (rw < 0.5 || rh < 0.5) break;
+  }
+  return out;
+}
+
+function setLegend(sizeLabel, showToggle) {
+  document.getElementById("size-label").textContent = `타일 크기 = ${sizeLabel}`;
+  document.getElementById("scale-toggle").style.display = showToggle ? "" : "none";
+}
+
+function renderTiles(items, onClick, subLabel) {
+  const box = document.getElementById("heatmap");
+  box.textContent = "";
+  if (!items.length) {
+    box.innerHTML = '<div class="empty">표시할 종목이 없습니다</div>';
+    return;
+  }
+  const W = box.clientWidth, H = box.clientHeight;
+  const sorted = [...items].sort((a, b) => b.value - a.value);
+  for (const t of squarify(sorted, 0, 0, W, H)) {
+    // 부동소수점 누적으로 마지막 줄이 살짝 넘칠 수 있어 컨테이너 안으로 고정
+    const left = Math.max(0, t.x), top = Math.max(0, t.y);
+    const w = Math.max(0, Math.min(t.w, W - left)), h = Math.max(0, Math.min(t.h, H - top));
+    if (w < 1 || h < 1) continue;
+    const el = document.createElement("div");
+    el.className = "tile" + (t.isNew ? " tile-new" : "");
+    el.style.cssText = `left:${left}px;top:${top}px;width:${w}px;height:${h}px;background:${heatColor(t.pct)}`;
+    const area = w * h;
+    if (t.noLabel) {                       // 소수 종목 섹터: 최소 블럭, 이름 없음
+      el.title = `${t.label}\n${subLabel(t)}\n시가총액 ${fmtMarcap(t.cap)}`;
+      el.addEventListener("click", () => onClick(t));
+      box.appendChild(el);
+      continue;
+    }
+    // 이름은 가장 작은 타일에도 보이게 한다. 폭이 좁으면 글자를 더 줄이고,
+    // 부가 정보(종목수·등락률)는 자리가 있을 때만 덧붙인다.
+    // 이름 길이까지 감안해 글자 크기를 정한다: L글자가 w폭에 줄바꿈돼 h높이 안에
+    // 들어가려면 fs ≲ sqrt(w*h / (L*1.1)). 이 상한을 지켜야 이름이 안 잘린다.
+    const L = Math.max(t.label.length, 1);
+    const fitFs = Math.sqrt((w * h) / (L * 1.1));
+    const fs = Math.max(6, Math.min(22, Math.sqrt(area) / 6, w / 3.2, fitFs));
+    el.innerHTML =
+      (t.isNew && area > 3000 ? `<div class="t-new">NEW</div>` : "") +
+      `<div class="t-name" style="font-size:${fs}px">${t.label}</div>` +
+      (area > 5200 && h > fs * 3 ? `<div class="t-val" style="font-size:${Math.max(8, fs * 0.72)}px">${subLabel(t)}</div>` : "");
+    el.title = `${t.label}\n${subLabel(t)}\n시가총액 ${fmtMarcap(t.cap)}`;
+    el.addEventListener("click", () => onClick(t));
+    box.appendChild(el);
+  }
+}
+
+function showSectors() {
+  currentSector = null;
+  const bySector = {};
+  for (const s of stocks) {
+    const b = bySector[s.sector] || (bySector[s.sector] = { cap: 0, wsum: 0, n: 0, nw: 0 });
+    b.cap += s.marcap; b.wsum += s.change_pct * s.marcap; b.n++;
+    if (isNew(s)) b.nw++;
+  }
+  // 크기 = 종목 수. 시총으로 하면 반도체가 78%를 먹어 섹터 강도를 못 읽는다.
+  // 5종목 이하는 최소 블럭(이름 없음)으로 눌러 강한 섹터가 도드라지게 한다.
+  const items = Object.entries(bySector).map(([name, b]) => {
+    const minor = b.n <= MINOR_MAX;
+    return {
+      label: name, value: minor ? MINOR_UNIT : b.n, cap: b.cap,
+      pct: b.cap ? b.wsum / b.cap : 0, count: b.n, newCount: b.nw,
+      key: name, noLabel: minor,
+    };
+  });
+  document.getElementById("crumb").innerHTML =
+    `<span class="cur">전체 섹터/테마</span><span class="cnt">${items.length}개 · ${stocks.length}종목</span>`;
+  setLegend("종목 수", false);
+  document.getElementById("heatmap").classList.add("sector-view");
+  renderTiles(items, t => showSector(t.key),
+    t => `${t.count}종목${t.newCount ? ` · NEW ${t.newCount}` : ""} ${t.pct >= 0 ? "+" : ""}${t.pct.toFixed(2)}%`);
+}
+
+function showSector(name) {
+  currentSector = name;
+  const list = stocks.filter(s => s.sector === name);
+  const items = list.map(s => ({
+    label: s.name, value: areaOf(s.marcap), cap: s.marcap,
+    pct: s.change_pct, code: s.code, isNew: isNew(s),
+  }));
+  const newCount = items.filter(i => i.isNew).length;
+  const crumb = document.getElementById("crumb");
+  crumb.innerHTML = `<button id="back">← 전체</button><span class="cur">${name}</span>` +
+    `<span class="cnt">${list.length}종목${newCount ? ` · 최근 진입 ${newCount}` : ""}</span>`;
+  crumb.querySelector("#back").addEventListener("click", showSectors);
+  setLegend("시가총액", true);
+  document.getElementById("heatmap").classList.remove("sector-view");
+  renderTiles(items, t => openChart(stocks.find(s => s.code === t.code)),
+              t => `${t.pct >= 0 ? "+" : ""}${t.pct.toFixed(2)}%`);
+}
+
+// ── 차트 모달 ──
+const modal = document.getElementById("modal");
+let chart = null;
+
+function themeColors() {
+  const css = getComputedStyle(document.documentElement);
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  return {
+    bg: css.getPropertyValue("--card").trim(),
+    text: css.getPropertyValue("--muted").trim(),
+    grid: dark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)",
+  };
+}
+
+function openChart(s) {
+  if (!s) return;
+  document.getElementById("m-name").textContent = s.name;
+  document.getElementById("m-code").textContent = `${s.code} · ${s.sector}`;
+  document.getElementById("m-gap").textContent = `30주선 +${s.gap_pct.toFixed(1)}%`;
+  document.getElementById("m-naver").href = `https://finance.naver.com/item/main.naver?code=${s.code}`;
+  modal.classList.add("open");
+
+  const box = document.getElementById("chart-box");
+  if (chart) { chart.remove(); chart = null; }
+  box.textContent = "";
+
+  fetch(`charts/${s.code}.json?v=${encodeURIComponent(dataVersion)}`)
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(d => {
+      if (!modal.classList.contains("open")) return;
+      const c = themeColors();
+      chart = LightweightCharts.createChart(box, {
+        layout: { background: { color: c.bg }, textColor: c.text },
+        grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+        rightPriceScale: { borderVisible: false },
+        timeScale: { borderVisible: false },
+        localization: { locale: "ko-KR", priceFormatter: p => p.toLocaleString("ko-KR") },
+      });
+      chart.addCandlestickSeries({
+        upColor: "#e5484d", wickUpColor: "#e5484d", borderUpColor: "#e5484d",
+        downColor: "#3b82f6", wickDownColor: "#3b82f6", borderDownColor: "#3b82f6",
+      }).setData(d.candles);
+      chart.addHistogramSeries({
+        priceFormat: { type: "volume" }, priceScaleId: "vol",
+        lastValueVisible: false, priceLineVisible: false,
+      }).setData(d.candles.map(c2 => ({
+        time: c2.time, value: c2.volume || 0,
+        color: c2.close >= c2.open ? "rgba(229,72,77,0.4)" : "rgba(59,130,246,0.4)",
+      })));
+      chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, visible: false });
+      chart.priceScale("right").applyOptions({ scaleMargins: { top: 0.05, bottom: 0.25 } });
+      chart.addLineSeries({
+        color: "#f59e0b", lineWidth: 2,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      }).setData(d.ma30);
+      const from = d.candles[Math.max(0, d.candles.length - 52)].time;
+      chart.timeScale().setVisibleRange({ from, to: d.candles[d.candles.length - 1].time });
+    })
+    .catch(() => { box.innerHTML = '<div class="empty">차트 데이터를 불러오지 못했습니다</div>'; });
+}
+
+function closeChart() {
+  modal.classList.remove("open");
+  if (chart) { chart.remove(); chart = null; }
+}
+document.getElementById("m-close").addEventListener("click", closeChart);
+modal.addEventListener("click", e => { if (e.target === modal) closeChart(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeChart(); });
+
+const scaleBtn = document.getElementById("scale-toggle");
+scaleBtn.setAttribute("aria-pressed", "true");
+scaleBtn.addEventListener("click", () => {
+  sqrtScale = !sqrtScale;
+  scaleBtn.setAttribute("aria-pressed", String(sqrtScale));
+  scaleBtn.textContent = sqrtScale ? "보정 보기" : "실제 비중";
+  currentSector ? showSector(currentSector) : showSectors();
+});
+
+let resizeTimer;
+addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (!stocks.length) return;
+    currentSector ? showSector(currentSector) : showSectors();
+    if (chart) {
+      const box = document.getElementById("chart-box");
+      chart.resize(box.clientWidth, box.clientHeight);
+    }
+  }, 150);
+});
+
+fetch("data.json", { cache: "no-cache" })
+  .then(r => r.json())
+  .then(d => {
+    dataVersion = d.updated;
+    // ETF는 개별 기업이 아니라 섹터 강도 판단을 흐려서 제외 (30Weeks 페이지에는 그대로 있음)
+    stocks = d.stocks.filter(s => s.sector && s.market !== "ETF");
+    document.getElementById("meta").textContent =
+      `기준: ${d.updated} · 30주선 위 ${fmt(stocks.length)}종목(ETF 제외)을 섹터/테마별로 분류 · 타일이 클수록 해당 섹터에 30주선 위 종목이 많다는 뜻`;
+    if (!stocks.length) {
+      document.getElementById("heatmap").innerHTML =
+        '<div class="empty">섹터 정보가 없습니다. 스크리닝을 다시 실행하세요.</div>';
+      return;
+    }
+    showSectors();
+  })
+  .catch(() => {
+    document.getElementById("meta").textContent = "data.json을 불러오지 못했습니다.";
+    document.getElementById("heatmap").innerHTML = '<div class="empty">데이터 없음</div>';
+  });
+</script>
+</body>
+</html>

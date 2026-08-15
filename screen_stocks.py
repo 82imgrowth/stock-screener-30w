@@ -13,6 +13,7 @@ from pathlib import Path
 
 import FinanceDataReader as fdr
 import pandas as pd
+import requests
 import yfinance as yf
 
 MA_WEEKS = 30
@@ -86,12 +87,75 @@ DOCS = Path(__file__).parent / "docs"
 OUT_PATH = DOCS / "data.json"
 CHART_DIR = DOCS / "charts"
 
+# 네이버 금융 업종 분류(WICS 기반, 79개). KRX/통계청 표준산업분류(KSIC)는
+# 지주사가 전부 '기타 금융업'으로 뭉개져 투자 관점 분류로 못 쓴다.
+NAVER_GROUP_URL = "https://finance.naver.com/sise/sise_group.naver?type=upjong"
+NAVER_DETAIL_URL = "https://finance.naver.com/sise/sise_group_detail.naver?type=upjong&no={}"
+UA = {"User-Agent": "Mozilla/5.0"}
+PREF_SUFFIX = re.compile(r"(\d?우[BC]?)$")  # 삼성물산우B, SK우 등 우선주 접미사
+
+
+def _naver_get(url: str) -> str:
+    r = requests.get(url, headers=UA, timeout=20)
+    r.raise_for_status()
+    r.encoding = "euc-kr"
+    return r.text
+
+
+def get_sector_map() -> dict:
+    """네이버 업종 분류 → {종목코드: 업종명}. 실패 시 빈 dict(섹터 없이 진행)."""
+    try:
+        html = _naver_get(NAVER_GROUP_URL)
+    except Exception as e:
+        print(f"[경고] 업종 목록 조회 실패: {e!r}", file=sys.stderr)
+        return {}
+    groups = re.findall(
+        r"sise_group_detail\.naver\?type=upjong&no=(\d+)\">([^<]+)</a>", html
+    )
+    if not groups:
+        print("[경고] 업종 목록 파싱 실패 (네이버 페이지 구조 변경 가능)", file=sys.stderr)
+        return {}
+
+    def fetch(item):
+        no, name = item
+        try:
+            return name, re.findall(
+                r"/item/main\.naver\?code=(\d{6})", _naver_get(NAVER_DETAIL_URL.format(no))
+            )
+        except Exception:
+            return name, None
+
+    mapping, failed = {}, 0
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for name, codes in ex.map(fetch, groups):
+            if codes is None:
+                failed += 1
+                continue
+            for c in codes:
+                mapping[c] = name
+    print(f"업종 분류: {len(groups) - failed}/{len(groups)}개 업종, {len(mapping)}종목 매핑")
+    return mapping
+
+
+def resolve_sector(code: str, name: str, market: str, sector_map: dict) -> str:
+    """종목의 업종명. ETF는 별도 버킷, 우선주는 보통주 업종을 물려받는다."""
+    if market == "ETF":
+        return "ETF"
+    if code in sector_map:
+        return sector_map[code]
+    # 우선주: 코드 끝자리만 다른 보통주(005930 ← 005935)를 먼저 시도
+    base = code[:5] + "0"
+    if base in sector_map:
+        return sector_map[base]
+    return "기타"
+
 
 def get_listings() -> pd.DataFrame:
     frames = []
     for market in ("KOSPI", "KOSDAQ"):
         df = fdr.StockListing(market)
-        df = df[["Code", "Name", "Market", "Close", "Marcap"]].copy()
+        df = df[["Code", "Name", "Market", "Close", "Marcap", "ChagesRatio"]].copy()
+        df = df.rename(columns={"ChagesRatio": "ChangeRate"})  # FDR 원본 오타
         frames.append(df)
 
     # ETF: 컬럼 체계가 달라 표준 스키마로 정규화 (Symbol→Code, Price→Close,
@@ -103,6 +167,7 @@ def get_listings() -> pd.DataFrame:
         "Market": "ETF",
         "Close": etf["Price"],
         "Marcap": etf["MarCap"].fillna(0) * 10**8,
+        "ChangeRate": etf["ChangeRate"],
     })
     # 인버스·채권·머니마켓·금리형·해외·원자재·레버리지 ETF 제외
     etf = etf[~etf["Name"].str.contains(ETF_EXCLUDE, regex=True, na=False)]
@@ -225,6 +290,7 @@ def main():
     listings = get_listings()
     total = len(listings)
     print(f"대상 종목: {total}")
+    sector_map = get_sector_map()
 
     # 차트 표시 기간 + MA 계산 워밍업 + 여유
     start = (datetime.today() - timedelta(weeks=CHART_WEEKS + MA_WEEKS + 8)).strftime("%Y-%m-%d")
@@ -255,6 +321,8 @@ def main():
                         "name": row.Name,
                         "market": row.Market,
                         "marcap": int(row.Marcap or 0),
+                        "sector": resolve_sector(row.Code, row.Name, row.Market, sector_map),
+                        "change_pct": round(float(row.ChangeRate or 0), 2),
                         **res,
                     }
                 )
