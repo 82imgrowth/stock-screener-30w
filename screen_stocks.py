@@ -7,6 +7,7 @@ import re
 import shutil
 import sys
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -86,6 +87,15 @@ def etf_extra_excluded(name: str) -> bool:
 DOCS = Path(__file__).parent / "docs"
 OUT_PATH = DOCS / "data.json"
 CHART_DIR = DOCS / "charts"
+REPORT_PATH = DOCS / "reports.json"
+
+# 네이버 종목분석 리포트. 정적 사이트라 브라우저에서 네이버를 직접 부르면 CORS로
+# 막히므로 스크리닝 때 미리 받아 JSON으로 굽는다. 목록에 목표주가·투자의견은 없고
+# 제목·증권사·작성일·PDF 링크만 있다(그건 리포트별 상세 페이지를 열어야 함).
+REPORT_LIST_URL = "https://finance.naver.com/research/company_list.naver?page={}"
+REPORT_PAGES = 400      # 30건/페이지 → 약 12,000건, 최근 14개월치
+# 종목당 개수는 제한하지 않는다(수집 기간이 상한 역할). 전 종목 합쳐 약 4,200건,
+# 파일 841KB지만 gzip 전송 시 약 150KB라 지연 로딩으로 감당된다.
 
 # 네이버 금융 업종 분류(WICS 기반, 79개). KRX/통계청 표준산업분류(KSIC)는
 # 지주사가 전부 '기타 금융업'으로 뭉개져 투자 관점 분류로 못 쓴다.
@@ -135,6 +145,54 @@ def get_sector_map() -> dict:
                 mapping[c] = name
     print(f"업종 분류: {len(groups) - failed}/{len(groups)}개 업종, {len(mapping)}종목 매핑")
     return mapping
+
+
+def _parse_report_page(page: int):
+    """리포트 목록 한 페이지 → [{code,title,broker,date,pdf,nid}]. 실패 시 None."""
+    try:
+        html = _naver_get(REPORT_LIST_URL.format(page))
+    except Exception:
+        return None
+    out = []
+    for row in re.findall(r"<tr>(.*?)</tr>", html, re.S):
+        m = re.search(r"/item/main\.naver\?code=(\d{6})", row)
+        if not m:
+            continue
+        cells = [re.sub(r"<[^>]+>", "", c).strip()
+                 for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)]
+        if len(cells) < 5:
+            continue
+        nid = re.search(r"company_read\.naver\?nid=(\d+)", row)
+        pdf = re.search(r'href="(https://stock\.pstatic\.net[^"]+\.pdf)"', row)
+        out.append({
+            "code": m.group(1), "title": cells[1], "broker": cells[2], "date": cells[4],
+            "pdf": pdf.group(1) if pdf else None, "nid": nid.group(1) if nid else None,
+        })
+    return out
+
+
+def get_reports(codes: set) -> dict:
+    """종목코드별 최신 리포트. 실패해도 스크리닝은 계속되도록 빈 dict를 돌려준다."""
+    by_code = defaultdict(list)
+    failed = 0
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for res in ex.map(_parse_report_page, range(1, REPORT_PAGES + 1)):
+            if res is None:
+                failed += 1
+                continue
+            for r in res:
+                if r["code"] in codes:
+                    by_code[r["code"]].append(r)
+    if failed == REPORT_PAGES:
+        print("[경고] 리포트 목록을 한 건도 받지 못했습니다", file=sys.stderr)
+        return {}
+    # 목록이 최신순이라 그대로 담으면 최근 것이 위에 온다
+    out = {c: [{k: v for k, v in r.items() if k != "code"} for r in rs]
+           for c, rs in by_code.items()}
+    total = sum(len(v) for v in out.values())
+    print(f"리포트: {REPORT_PAGES - failed}/{REPORT_PAGES}페이지, "
+          f"{len(out)}종목 커버, {total}건")
+    return out
 
 
 def resolve_sector(code: str, name: str, market: str, sector_map: dict) -> str:
@@ -369,8 +427,16 @@ def main():
         (CHART_DIR / f"{code}.json").write_text(
             json.dumps(chart, ensure_ascii=False), encoding="utf-8"
         )
+    # 통과 종목의 증권사 리포트 (수집 실패해도 스크리닝 결과는 그대로 유지)
+    reports = get_reports({r["code"] for r in results})
+    REPORT_PATH.write_text(
+        json.dumps({"updated": out["updated"], "reports": reports}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
     print(f"완료: {len(results)}/{total} 종목이 30주선 위 → {OUT_PATH}")
     print(f"차트 파일 {len(charts)}개 생성 → {CHART_DIR}")
+    print(f"리포트 파일 → {REPORT_PATH} ({REPORT_PATH.stat().st_size // 1024}KB)")
     if unverified:
         print(f"[주의] 검증 불가 {len(unverified)}종목 (데이터 오류로 판정 제외):")
         for u in unverified:
