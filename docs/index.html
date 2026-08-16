@@ -20,7 +20,9 @@
     font-family: "Pretendard", -apple-system, "Malgun Gothic", sans-serif;
     background: var(--bg); color: var(--text); padding: 24px 16px; line-height: 1.5;
   }
-  .wrap { max-width: 960px; margin: 0 auto; }
+  /* 섹터 열이 늘어 표가 1100px 안팎을 쓴다. 960px로 묶으면 시가총액이 잘려
+     가로 드래그가 필요해지므로 넓은 화면에서는 창에 맞춰 넓어지게 둔다. */
+  .wrap { max-width: 1280px; margin: 0 auto; }
   .topnav { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
   .topnav a {
     padding: 8px 16px; font-size: 0.92rem; font-weight: 600; text-decoration: none;
@@ -41,10 +43,15 @@
   }
   .table-box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 760px; }
-  th, td { padding: 10px 14px; text-align: right; white-space: nowrap; }
+  th, td { padding: 10px 12px; text-align: right; white-space: nowrap; }
   th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3),
   th:nth-child(4), td:nth-child(4) { text-align: left; }
+  /* 긴 업종명이 표 폭을 밀어내지 않도록 잘라서 표시(전체 이름은 title로) */
   .sector-col { color: var(--muted); font-size: 0.82rem; }
+  .sector-col span {
+    display: inline-block; max-width: 130px; overflow: hidden;
+    text-overflow: ellipsis; vertical-align: bottom;
+  }
   thead th {
     color: var(--muted); font-weight: 600; font-size: 0.8rem;
     border-bottom: 1px solid var(--border); cursor: pointer; user-select: none;
@@ -211,7 +218,7 @@ function render() {
       <td class="num-col">${isNew(s) ? '<span class="new-badge">NEW</span>' : ''}${i + 1}</td>
       <td><span class="stock-link">${s.name}</span> <span class="mkt">${s.code}</span></td>
       <td class="mkt">${s.market}</td>
-      <td class="sector-col">${s.sector || "-"}</td>
+      <td class="sector-col"><span title="${s.sector || ""}">${s.sector || "-"}</span></td>
       <td>${fmt(s.price)}</td>
       <td>${fmt(Math.round(s.ma30))}</td>
       <td class="gap">+${s.gap_pct.toFixed(1)}%</td>
