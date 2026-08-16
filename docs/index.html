@@ -143,6 +143,15 @@
     .num-col { white-space: normal; padding-right: 2px; }
     .new-badge { display: block; font-size: 0.55rem; padding: 0 2px; margin: 0 0 1px; }
   }
+  /* 폰 폭에서는 KOSPI→KP, KOSDAQ→KQ로 줄이고 남는 폭을 종목명·섹터에 돌린다 */
+  .m-abbr { display: none; }
+  @media (max-width: 520px) {
+    .m-full { display: none; }
+    .m-abbr { display: inline; }
+    th:nth-child(3), td:nth-child(3) { width: 5%; }
+    th:nth-child(2), td:nth-child(2) { width: 18%; }
+    th:nth-child(4), td:nth-child(4) { width: 14%; }
+  }
 </style>
 </head>
 <body>
@@ -201,6 +210,9 @@
 let stocks = [];
 let sortKey = "marcap", sortDesc = true;
 
+// 폰 폭에서는 시장명을 줄여 표시(ETF는 이미 짧아 그대로)
+const MKT_ABBR = { KOSPI: "KP", KOSDAQ: "KQ" };
+
 const fmt = n => n.toLocaleString("ko-KR");
 const fmtMarcap = n => {
   const jo = Math.floor(n / 1e12), eok = Math.round((n % 1e12) / 1e8);
@@ -242,7 +254,7 @@ function render() {
     <tr data-code="${s.code}"${isNew(s) ? ' class="is-new"' : ''}>
       <td class="num-col">${isNew(s) ? '<span class="new-badge">NEW</span>' : ''}${i + 1}</td>
       <td><span class="stock-link">${s.name}</span> <span class="mkt">${s.code}</span></td>
-      <td class="mkt">${s.market}</td>
+      <td class="mkt"><span class="m-full">${s.market}</span><span class="m-abbr">${MKT_ABBR[s.market] || s.market}</span></td>
       <td class="sector-col"><span title="${s.sector || ""}">${s.sector || "-"}</span></td>
       <td>${fmt(s.price)}</td>
       <td>${fmt(Math.round(s.ma30))}</td>
