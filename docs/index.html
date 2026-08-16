@@ -122,8 +122,8 @@
   .modal-backdrop.open { display: flex; }
   .modal {
     background: var(--card); border: 1px solid var(--border); border-radius: 14px;
-    width: 100%; max-width: 860px; overflow: hidden;
-    display: flex; flex-direction: column;
+    width: 100%; max-width: 1140px; overflow: hidden;
+    display: flex; flex-direction: column; max-height: 92vh;
   }
   .modal-head {
     display: flex; align-items: center; gap: 10px; padding: 14px 18px;
@@ -138,8 +138,39 @@
     cursor: pointer; padding: 0 4px; line-height: 1;
   }
   .modal-close:hover { color: var(--text); }
+  /* 차트(왼쪽) + 증권사 리포트(오른쪽). 좁은 화면에서는 리포트가 차트 아래로 내려간다. */
+  /* 리포트가 많은 종목(삼성전자 165건)에서도 팝업이 늘어나지 않게 body를 가두고
+     목록만 안에서 스크롤시킨다 */
+  .modal-body { display: flex; align-items: stretch; min-height: 0; overflow: hidden; }
+  /* 리포트 목록이 길어 팝업이 커지면 차트가 위쪽에 붙어 아래 여백이 크게 남는다.
+     남는 공간을 위아래로 나눠 차트를 세로 중앙에 둔다. */
+  .chart-pane { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
   #chart-box { width: 100%; height: 420px; }
   .chart-hint { padding: 8px 18px 14px; color: var(--muted); font-size: 0.75rem; }
+  .report-pane {
+    flex: 0 0 278px; border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  }
+  .report-pane h3 {
+    font-size: 0.85rem; padding: 12px 14px 8px; color: var(--muted); font-weight: 600;
+    border-bottom: 1px solid var(--border);
+  }
+  .report-pane h3 span { font-weight: 400; }
+  #report-list { overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: 4px 0; }
+  .rp-item {
+    display: block; padding: 9px 14px; text-decoration: none; color: inherit;
+    border-bottom: 1px solid var(--border);
+  }
+  .rp-item:last-child { border-bottom: none; }
+  .rp-item:hover { background: var(--hover); }
+  .rp-title { font-size: 0.82rem; line-height: 1.35; margin-bottom: 3px; word-break: keep-all; }
+  .rp-meta { font-size: 0.72rem; color: var(--muted); }
+  .rp-pdf { color: var(--accent); }
+  .rp-empty { padding: 24px 14px; text-align: center; color: var(--muted); font-size: 0.8rem; line-height: 1.5; }
+  @media (max-width: 900px) {
+    .modal-body { flex-direction: column; }
+    .report-pane { flex: 0 0 auto; border-left: none; border-top: 1px solid var(--border); max-height: 210px; }
+  }
   @media (max-width: 640px) { #chart-box { height: 300px; } }
 
   /* 좁은 화면 보정 — 뒤에 오는 .num-col/.new-badge 기본 규칙을 덮어야 하므로 맨 끝에 둔다.
@@ -206,13 +237,22 @@
       <a id="m-naver" href="#" target="_blank" rel="noopener">네이버 금융 ↗</a>
       <button class="modal-close" id="m-close" aria-label="닫기">×</button>
     </div>
-    <div id="chart-box"></div>
-    <div class="chart-hint">주봉 · 주황선 = 30주 이동평균 · 하단 막대 = 거래량 · 휠/핀치로 줌, 드래그로 기간 이동</div>
+    <div class="modal-body">
+      <div class="chart-pane">
+        <div id="chart-box"></div>
+        <div class="chart-hint">주봉 · 주황선 = 30주 이동평균 · 하단 막대 = 거래량 · 휠/핀치로 줌, 드래그로 기간 이동</div>
+      </div>
+      <aside class="report-pane">
+        <h3>증권사 리포트 <span id="rp-count"></span></h3>
+        <div id="report-list"></div>
+      </aside>
+    </div>
   </div>
 </div>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 let stocks = [];
+let reports = null;   // { 종목코드: [{title, broker, date, pdf, nid}] }
 let sortKey = "marcap", sortDesc = true;
 
 // 폰 폭에서는 시장명을 줄여 표시(ETF는 이미 짧아 그대로)
@@ -301,12 +341,40 @@ function themeColors() {
   };
 }
 
+const esc = t => String(t).replace(/[&<>"]/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m]));
+
+// 증권사 리포트 목록. PDF가 있으면 원문으로, 없으면 네이버 상세 페이지로 연결.
+function renderReports(code) {
+  const list = document.getElementById("report-list");
+  const cnt = document.getElementById("rp-count");
+  if (!reports) {                       // reports.json이 아직/영영 없을 때
+    cnt.textContent = "";
+    list.innerHTML = '<div class="rp-empty">리포트 정보를 불러오는 중…</div>';
+    return;
+  }
+  const items = reports[code] || [];
+  cnt.textContent = items.length ? `${items.length}건` : "";
+  if (!items.length) {
+    list.innerHTML = '<div class="rp-empty">등록된 리포트가 없습니다.<br>증권사 리포트는 주로 대형·중형주에 나옵니다.</div>';
+    return;
+  }
+  list.innerHTML = items.map(r => {
+    const href = r.pdf || `https://finance.naver.com/research/company_read.naver?nid=${r.nid}`;
+    return `<a class="rp-item" href="${esc(href)}" target="_blank" rel="noopener">
+      <div class="rp-title">${esc(r.title)}</div>
+      <div class="rp-meta">${esc(r.broker)} · ${esc(r.date)}${r.pdf ? ' · <span class="rp-pdf">PDF</span>' : ""}</div>
+    </a>`;
+  }).join("");
+  list.scrollTop = 0;
+}
+
 function openChart(s) {
   document.getElementById("m-name").textContent = s.name;
   document.getElementById("m-code").textContent = `${s.code} · ${s.market}`;
   document.getElementById("m-gap").textContent = `30주선 +${s.gap_pct.toFixed(1)}%`;
   document.getElementById("m-naver").href = `https://finance.naver.com/item/main.naver?code=${s.code}`;
   modal.classList.add("open");
+  renderReports(s.code);
 
   const box = document.getElementById("chart-box");
   if (chart) { chart.remove(); chart = null; }
@@ -388,6 +456,18 @@ new ResizeObserver(() => {
     chart.resize(box.clientWidth, box.clientHeight);
   }
 }).observe(document.getElementById("chart-box"));
+
+// 리포트는 부가 정보라 실패해도 페이지는 그대로 동작해야 한다
+fetch("reports.json", { cache: "no-cache" })
+  .then(r => (r.ok ? r.json() : null))
+  .then(d => {
+    reports = (d && d.reports) || {};
+    if (modal.classList.contains("open")) {
+      const code = document.getElementById("m-code").textContent.split(" ")[0];
+      renderReports(code);
+    }
+  })
+  .catch(() => { reports = {}; });
 
 let dataVersion = "";
 fetch("data.json", { cache: "no-cache" })
