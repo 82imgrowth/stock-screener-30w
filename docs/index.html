@@ -40,9 +40,11 @@
     border-radius: 8px; background: var(--card); color: var(--text);
   }
   .table-box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 640px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 760px; }
   th, td { padding: 10px 14px; text-align: right; white-space: nowrap; }
-  th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3) { text-align: left; }
+  th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3),
+  th:nth-child(4), td:nth-child(4) { text-align: left; }
+  .sector-col { color: var(--muted); font-size: 0.82rem; }
   thead th {
     color: var(--muted); font-weight: 600; font-size: 0.8rem;
     border-bottom: 1px solid var(--border); cursor: pointer; user-select: none;
@@ -136,6 +138,7 @@
           <th class="num-col">#</th>
           <th data-key="name">종목명</th>
           <th data-key="market">시장</th>
+          <th data-key="sector">섹터 <span class="arrow" id="ar-sector"></span></th>
           <th data-key="price">현재가</th>
           <th data-key="ma30">30주선</th>
           <th data-key="gap_pct">이격률 <span class="arrow" id="ar-gap_pct"></span></th>
@@ -143,7 +146,7 @@
           <th data-key="marcap">시가총액 <span class="arrow" id="ar-marcap">▼</span></th>
         </tr>
       </thead>
-      <tbody id="tbody"><tr><td colspan="8" class="empty">로딩 중...</td></tr></tbody>
+      <tbody id="tbody"><tr><td colspan="9" class="empty">로딩 중...</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -200,7 +203,7 @@ function render() {
 
   const tbody = document.getElementById("tbody");
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty">조건에 맞는 종목이 없습니다</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">조건에 맞는 종목이 없습니다</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map((s, i) => `
@@ -208,6 +211,7 @@ function render() {
       <td class="num-col">${isNew(s) ? '<span class="new-badge">NEW</span>' : ''}${i + 1}</td>
       <td><span class="stock-link">${s.name}</span> <span class="mkt">${s.code}</span></td>
       <td class="mkt">${s.market}</td>
+      <td class="sector-col">${s.sector || "-"}</td>
       <td>${fmt(s.price)}</td>
       <td>${fmt(Math.round(s.ma30))}</td>
       <td class="gap">+${s.gap_pct.toFixed(1)}%</td>
@@ -347,7 +351,7 @@ fetch("data.json", { cache: "no-cache" })
   })
   .catch(() => {
     document.getElementById("meta").textContent = "data.json을 불러오지 못했습니다. 스크리닝을 먼저 실행하세요.";
-    document.getElementById("tbody").innerHTML = '<tr><td colspan="8" class="empty">데이터 없음</td></tr>';
+    document.getElementById("tbody").innerHTML = '<tr><td colspan="9" class="empty">데이터 없음</td></tr>';
   });
 </script>
 </body>
