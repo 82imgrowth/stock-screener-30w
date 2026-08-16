@@ -42,28 +42,30 @@
     border-radius: 8px; background: var(--card); color: var(--text);
   }
   .table-box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow-x: auto; }
-  /* 창이 좁아지면 ① 글자·여백을 먼저 줄이고 ② 더 줄이면 읽기 힘드니 줄바꿈으로
-     전환한다. 어느 폭에서도 열을 숨기지 않고 전 정보를 한 화면에 보여주기 위함. */
-  /* 표가 다 들어가는 1120px까지는 기본 크기를 유지하고, 그 아래에서만 줄어들게
-     기울기를 잡았다(1120px→14.4px, 760px→10.9px에서 하한). */
-  table { width: 100%; border-collapse: collapse; font-size: clamp(0.68rem, calc(3.5px + 0.97vw), 0.9rem); }
+  /* 폰·노트북을 한 규칙으로 대응한다. 열 너비를 비율로 고정(table-layout: fixed)해
+     숫자 열이 폭을 독식하지 못하게 막고, 남는 폭에서 글자 크기가 창에 따라 줄며,
+     모자라면 텍스트가 최대 3줄까지 넘어간다. 어느 폭에서도 열을 숨기지 않는다.
+     (auto 레이아웃에서는 375px에서 섹터가 5줄까지 쪼개졌다) */
+  table {
+    width: 100%; border-collapse: collapse; table-layout: fixed;
+    font-size: clamp(9px, calc(5.1px + 0.83vw), 0.9rem);
+  }
   th, td {
-    padding: clamp(6px, calc(-4px + 1.28vw), 10px) clamp(5px, calc(-9.5px + 1.92vw), 12px);
-    text-align: right; white-space: nowrap;
+    padding: clamp(4px, calc(-1px + 0.75vw), 10px) clamp(2px, calc(-6.5px + 1.55vw), 12px);
+    text-align: right; white-space: normal; word-break: keep-all; overflow-wrap: anywhere;
   }
-  /* 글자를 더 줄이면 읽기 힘든 구간부터는 줄바꿈으로 전환한다.
-     keep-all이라 한글 단어 중간이 아니라 공백에서 끊겨, 종목명 뒤 종목코드와
-     긴 업종명이 잘리지 않고 둘째 줄로 넘어간다. */
-  @media (max-width: 1140px) {
-    th, td { white-space: normal; word-break: keep-all; }
-    .num-col { white-space: nowrap; }
-  }
-  /* 종목명·섹터는 공백에서 먼저 끊어 종목코드를 둘째 줄로 내리고, 그래도 넘치면
-     긴 업종명을 글자 단위로 넘긴다(잘라내지 않음). 폭이 더 좁은 휴대폰에서는
-     셀이 4~5줄로 잘게 쪼개져 오히려 읽기 나쁘므로 적용하지 않는다. */
-  @media (min-width: 601px) and (max-width: 1140px) {
-    td:nth-child(2), td:nth-child(4) { word-break: normal; overflow-wrap: anywhere; }
-  }
+  /* 숫자는 중간에서 쪼개지면 오독되므로 한 줄 유지 */
+  td:nth-child(5), td:nth-child(6), td:nth-child(7), td:nth-child(8),
+  .num-col { white-space: nowrap; overflow-wrap: normal; }
+  th:nth-child(1), td:nth-child(1) { width: 9%; }
+  th:nth-child(2), td:nth-child(2) { width: 17%; }
+  th:nth-child(3), td:nth-child(3) { width: 7%; }
+  th:nth-child(4), td:nth-child(4) { width: 13%; }
+  th:nth-child(5), td:nth-child(5) { width: 12%; }
+  th:nth-child(6), td:nth-child(6) { width: 12%; }
+  th:nth-child(7), td:nth-child(7) { width: 11.5%; }
+  th:nth-child(8), td:nth-child(8) { width: 7.5%; }
+  th:nth-child(9), td:nth-child(9) { width: 11%; }
   th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3),
   th:nth-child(4), td:nth-child(4) { text-align: left; }
   .sector-col { color: var(--muted); font-size: 0.82em; }
@@ -134,6 +136,13 @@
   #chart-box { width: 100%; height: 420px; }
   .chart-hint { padding: 8px 18px 14px; color: var(--muted); font-size: 0.75rem; }
   @media (max-width: 640px) { #chart-box { height: 300px; } }
+
+  /* 좁은 화면 보정 — 뒤에 오는 .num-col/.new-badge 기본 규칙을 덮어야 하므로 맨 끝에 둔다.
+     NEW 배지를 순번 위로 올려 # 열이 넓어지는 걸 막는다. */
+  @media (max-width: 700px) {
+    .num-col { white-space: normal; padding-right: 2px; }
+    .new-badge { display: block; font-size: 0.55rem; padding: 0 2px; margin: 0 0 1px; }
+  }
 </style>
 </head>
 <body>
