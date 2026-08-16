@@ -158,7 +158,7 @@
 <div class="wrap">
   <nav class="topnav">
     <a href="index.html" class="active">30Weeks</a>
-    <a href="sector.html">섹터/테마</a>
+    <a href="sector.html">섹터 히트맵</a>
   </nav>
   <h1>30주 이동평균선 위 종목</h1>
   <div class="meta" id="meta">데이터 로딩 중...</div>
@@ -315,7 +315,8 @@ function openChart(s) {
       chart = LightweightCharts.createChart(box, {
         layout: { background: { color: c.bg }, textColor: c.text },
         grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
-        rightPriceScale: { borderVisible: false },
+        // 국내 주가는 '1,645,000'처럼 자릿수가 길어 기본 축 폭에서 잘린다
+        rightPriceScale: { borderVisible: false, minimumWidth: 76 },
         timeScale: { borderVisible: false },
         localization: { locale: "ko-KR", priceFormatter: p => p.toLocaleString("ko-KR") },
       });
@@ -323,6 +324,13 @@ function openChart(s) {
       chart.addCandlestickSeries({
         upColor: "#e5484d", wickUpColor: "#e5484d", borderUpColor: "#e5484d",
         downColor: "#3b82f6", wickDownColor: "#3b82f6", borderDownColor: "#3b82f6",
+        // 거래량 자리(하단 25%)를 비우느라 축이 0 아래까지 내려가 '-400,000' 같은
+        // 없는 가격이 찍혔다. 0 미만으로는 안 내려가게 막는다.
+        autoscaleInfoProvider: orig => {
+          const r = orig();
+          if (r && r.priceRange) r.priceRange.minValue = Math.max(0, r.priceRange.minValue);
+          return r;
+        },
       }).setData(d.candles);
       // 거래량: 하단 20% 영역에 반투명 히스토그램
       chart.addHistogramSeries({
