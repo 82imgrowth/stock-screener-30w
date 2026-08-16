@@ -244,8 +244,10 @@ function renderTiles(items, onClick, subLabel) {
   }
 }
 
-function showSectors() {
+// push=true일 때만 히스토리에 기록한다. 리사이즈·popstate 재렌더는 기록하면 안 된다.
+function showSectors(push = false) {
   currentSector = null;
+  if (push) history.pushState({ sector: null }, "", location.pathname);
   const bySector = {};
   for (const s of stocks) {
     const b = bySector[s.sector] || (bySector[s.sector] = { cap: 0, wsum: 0, n: 0, nw: 0 });
@@ -266,12 +268,13 @@ function showSectors() {
     `<span class="cur">전체 섹터/테마</span><span class="cnt">${items.length}개 · ${stocks.length}종목</span>`;
   setLegend("종목 수", false);
   document.getElementById("heatmap").classList.add("sector-view");
-  renderTiles(items, t => showSector(t.key),
+  renderTiles(items, t => showSector(t.key, true),
     t => `${t.count}종목${t.newCount ? ` · NEW ${t.newCount}` : ""} ${t.pct >= 0 ? "+" : ""}${t.pct.toFixed(2)}%`);
 }
 
-function showSector(name) {
+function showSector(name, push = false) {
   currentSector = name;
+  if (push) history.pushState({ sector: name }, "", `?sector=${encodeURIComponent(name)}`);
   const list = stocks.filter(s => s.sector === name);
   const items = list.map(s => ({
     label: s.name, value: areaOf(s.marcap), cap: s.marcap,
@@ -281,7 +284,7 @@ function showSector(name) {
   const crumb = document.getElementById("crumb");
   crumb.innerHTML = `<button id="back">← 전체</button><span class="cur">${name}</span>` +
     `<span class="cnt">${list.length}종목${newCount ? ` · 최근 진입 ${newCount}` : ""}</span>`;
-  crumb.querySelector("#back").addEventListener("click", showSectors);
+  crumb.querySelector("#back").addEventListener("click", () => showSectors(true));
   setLegend("시가총액", true);
   document.getElementById("heatmap").classList.remove("sector-view");
   renderTiles(items, t => openChart(stocks.find(s => s.code === t.code)),
@@ -379,6 +382,14 @@ addEventListener("resize", () => {
   }, 150);
 });
 
+// 브라우저 뒤로가기: 종목 화면 → 섹터 히트맵으로 돌아온다(페이지를 벗어나지 않음)
+addEventListener("popstate", e => {
+  if (!stocks.length) return;
+  closeChart();
+  const name = e.state ? e.state.sector : new URLSearchParams(location.search).get("sector");
+  name && stocks.some(s => s.sector === name) ? showSector(name) : showSectors();
+});
+
 fetch("data.json", { cache: "no-cache" })
   .then(r => r.json())
   .then(d => {
@@ -392,7 +403,11 @@ fetch("data.json", { cache: "no-cache" })
         '<div class="empty">섹터 정보가 없습니다. 스크리닝을 다시 실행하세요.</div>';
       return;
     }
-    showSectors();
+    // ?sector=... 로 들어오면 그 섹터를 바로 열어 새로고침·공유에도 화면이 유지된다.
+    const initial = new URLSearchParams(location.search).get("sector");
+    const valid = initial && stocks.some(s => s.sector === initial);
+    history.replaceState({ sector: valid ? initial : null }, "", location.href);
+    valid ? showSector(initial) : showSectors();
   })
   .catch(() => {
     document.getElementById("meta").textContent = "data.json을 불러오지 못했습니다.";
