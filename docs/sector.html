@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>섹터/테마 히트맵 · 30주선 위 종목</title>
+<title>섹터 히트맵 · 30주선 위 종목</title>
 <style>
   :root {
     --bg: #f7f8fa; --card: #fff; --text: #1a1d24; --muted: #6b7280;
@@ -101,9 +101,9 @@
 <div class="wrap">
   <nav class="topnav">
     <a href="index.html">30Weeks</a>
-    <a href="sector.html" class="active">섹터/테마</a>
+    <a href="sector.html" class="active">섹터 히트맵</a>
   </nav>
-  <h1>섹터/테마 히트맵</h1>
+  <h1>섹터 히트맵</h1>
   <div class="meta" id="meta">데이터 로딩 중...</div>
   <div class="crumb" id="crumb"></div>
   <div id="heatmap"></div>
@@ -265,7 +265,7 @@ function showSectors(push = false) {
     };
   });
   document.getElementById("crumb").innerHTML =
-    `<span class="cur">전체 섹터/테마</span><span class="cnt">${items.length}개 · ${stocks.length}종목</span>`;
+    `<span class="cur">전체 섹터</span><span class="cnt">${items.length}개 · ${stocks.length}종목</span>`;
   setLegend("종목 수", false);
   document.getElementById("heatmap").classList.add("sector-view");
   renderTiles(items, t => showSector(t.key, true),
@@ -325,13 +325,20 @@ function openChart(s) {
       chart = LightweightCharts.createChart(box, {
         layout: { background: { color: c.bg }, textColor: c.text },
         grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
-        rightPriceScale: { borderVisible: false },
+        // 국내 주가는 '1,645,000'처럼 자릿수가 길어 기본 축 폭에서 잘린다
+        rightPriceScale: { borderVisible: false, minimumWidth: 76 },
         timeScale: { borderVisible: false },
         localization: { locale: "ko-KR", priceFormatter: p => p.toLocaleString("ko-KR") },
       });
       chart.addCandlestickSeries({
         upColor: "#e5484d", wickUpColor: "#e5484d", borderUpColor: "#e5484d",
         downColor: "#3b82f6", wickDownColor: "#3b82f6", borderDownColor: "#3b82f6",
+        // 거래량 자리를 비우느라 축이 0 아래까지 내려가는 것을 막는다
+        autoscaleInfoProvider: orig => {
+          const r = orig();
+          if (r && r.priceRange) r.priceRange.minValue = Math.max(0, r.priceRange.minValue);
+          return r;
+        },
       }).setData(d.candles);
       chart.addHistogramSeries({
         priceFormat: { type: "volume" }, priceScaleId: "vol",
@@ -397,7 +404,7 @@ fetch("data.json", { cache: "no-cache" })
     // ETF는 개별 기업이 아니라 섹터 강도 판단을 흐려서 제외 (30Weeks 페이지에는 그대로 있음)
     stocks = d.stocks.filter(s => s.sector && s.market !== "ETF");
     document.getElementById("meta").textContent =
-      `기준: ${d.updated} · 30주선 위 ${fmt(stocks.length)}종목(ETF 제외)을 섹터/테마별로 분류 · 타일이 클수록 해당 섹터에 30주선 위 종목이 많다는 뜻`;
+      `기준: ${d.updated} · 30주선 위 ${fmt(stocks.length)}종목(ETF 제외)을 섹터별로 분류 · 타일이 클수록 해당 섹터에 30주선 위 종목이 많다는 뜻`;
     if (!stocks.length) {
       document.getElementById("heatmap").innerHTML =
         '<div class="empty">섹터 정보가 없습니다. 스크리닝을 다시 실행하세요.</div>';
