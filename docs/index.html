@@ -46,39 +46,44 @@
      숫자 열이 폭을 독식하지 못하게 막고, 남는 폭에서 글자 크기가 창에 따라 줄며,
      모자라면 텍스트가 최대 3줄까지 넘어간다. 어느 폭에서도 열을 숨기지 않는다.
      (auto 레이아웃에서는 375px에서 섹터가 5줄까지 쪼개졌다) */
-  table {
+  /* 주의: 이 표 규칙은 반드시 .table-box 안으로 한정한다. Lightweight Charts가
+     차트를 내부 <table>로 그려서, 전역 table/td 규칙을 두면 차트의 가격축 칸까지
+     고정 너비로 눌려 축 숫자가 잘린다(실제로 33px까지 줄었음). */
+  .table-box table {
     width: 100%; border-collapse: collapse; table-layout: fixed;
     font-size: clamp(9px, calc(5.1px + 0.83vw), 0.9rem);
   }
-  th, td {
+  .table-box th, .table-box td {
     padding: clamp(4px, calc(-1px + 0.75vw), 10px) clamp(2px, calc(-6.5px + 1.55vw), 12px);
     text-align: right; white-space: normal; word-break: keep-all; overflow-wrap: anywhere;
   }
   /* 숫자는 중간에서 쪼개지면 오독되므로 한 줄 유지 */
-  td:nth-child(5), td:nth-child(6), td:nth-child(7), td:nth-child(8),
+  .table-box td:nth-child(5), .table-box td:nth-child(6),
+  .table-box td:nth-child(7), .table-box td:nth-child(8),
   .num-col { white-space: nowrap; overflow-wrap: normal; }
-  th:nth-child(1), td:nth-child(1) { width: 9%; }
-  th:nth-child(2), td:nth-child(2) { width: 17%; }
-  th:nth-child(3), td:nth-child(3) { width: 7%; }
-  th:nth-child(4), td:nth-child(4) { width: 13%; }
-  th:nth-child(5), td:nth-child(5) { width: 12%; }
-  th:nth-child(6), td:nth-child(6) { width: 12%; }
-  th:nth-child(7), td:nth-child(7) { width: 11.5%; }
-  th:nth-child(8), td:nth-child(8) { width: 7.5%; }
-  th:nth-child(9), td:nth-child(9) { width: 11%; }
-  th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3),
-  th:nth-child(4), td:nth-child(4) { text-align: left; }
+  .table-box th:nth-child(1), .table-box td:nth-child(1) { width: 9%; }
+  .table-box th:nth-child(2), .table-box td:nth-child(2) { width: 17%; }
+  .table-box th:nth-child(3), .table-box td:nth-child(3) { width: 7%; }
+  .table-box th:nth-child(4), .table-box td:nth-child(4) { width: 13%; }
+  .table-box th:nth-child(5), .table-box td:nth-child(5) { width: 12%; }
+  .table-box th:nth-child(6), .table-box td:nth-child(6) { width: 12%; }
+  .table-box th:nth-child(7), .table-box td:nth-child(7) { width: 11.5%; }
+  .table-box th:nth-child(8), .table-box td:nth-child(8) { width: 7.5%; }
+  .table-box th:nth-child(9), .table-box td:nth-child(9) { width: 11%; }
+  .table-box th:nth-child(2), .table-box td:nth-child(2),
+  .table-box th:nth-child(3), .table-box td:nth-child(3),
+  .table-box th:nth-child(4), .table-box td:nth-child(4) { text-align: left; }
   .sector-col { color: var(--muted); font-size: 0.82em; }
   .sector-col span { display: inline; }
-  thead th {
+  .table-box thead th {
     color: var(--muted); font-weight: 600; font-size: 0.8rem;
     border-bottom: 1px solid var(--border); cursor: pointer; user-select: none;
     position: sticky; top: 0; background: var(--card);
   }
-  thead th:hover { color: var(--accent); }
+  .table-box thead th:hover { color: var(--accent); }
   .num-col { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; padding-right: 4px; width: 1%; white-space: nowrap; }
-  thead th.num-col { cursor: default; }
-  thead th.num-col:hover { color: var(--muted); }
+  .table-box thead th.num-col { cursor: default; }
+  .table-box thead th.num-col:hover { color: var(--muted); }
   #new-only {
     padding: 10px 14px; font-size: 0.9rem; cursor: pointer;
     border: 1px solid var(--border); border-radius: 8px;
@@ -86,11 +91,11 @@
   }
   #new-only:hover { color: var(--text); }
   #new-only[aria-pressed="true"] { background: var(--up); border-color: var(--up); color: #fff; font-weight: 600; }
-  tbody tr.is-new { background: rgba(217, 44, 44, 0.06); }
-  tbody tr.is-new:hover { background: rgba(217, 44, 44, 0.12); }
+  .table-box tbody tr.is-new { background: rgba(217, 44, 44, 0.06); }
+  .table-box tbody tr.is-new:hover { background: rgba(217, 44, 44, 0.12); }
   @media (prefers-color-scheme: dark) {
-    tbody tr.is-new { background: rgba(248, 113, 113, 0.10); }
-    tbody tr.is-new:hover { background: rgba(248, 113, 113, 0.18); }
+    .table-box tbody tr.is-new { background: rgba(248, 113, 113, 0.10); }
+    .table-box tbody tr.is-new:hover { background: rgba(248, 113, 113, 0.18); }
   }
   /* 신규 진입(최근 3일 내 30주선 상향돌파) 표시 */
   .new-badge {
@@ -98,16 +103,16 @@
     font-size: 0.62rem; font-weight: 700; letter-spacing: 0.03em; line-height: 1.4;
     color: #fff; background: var(--up); border-radius: 4px; vertical-align: middle;
   }
-  tbody tr { border-bottom: 1px solid var(--border); }
-  tbody tr:last-child { border-bottom: none; }
-  tbody tr:hover { background: var(--hover); }
+  .table-box tbody tr { border-bottom: 1px solid var(--border); }
+  .table-box tbody tr:last-child { border-bottom: none; }
+  .table-box tbody tr:hover { background: var(--hover); }
   .gap { color: var(--up); font-weight: 600; }
   .mkt { font-size: 0.75rem; color: var(--muted); }
   a.stock-link { color: var(--text); text-decoration: none; font-weight: 500; }
   a.stock-link:hover { color: var(--accent); text-decoration: underline; }
   .empty { padding: 40px; text-align: center; color: var(--muted); }
   .arrow { font-size: 0.7em; }
-  tbody tr { cursor: pointer; }
+  .table-box tbody tr { cursor: pointer; }
 
   /* 차트 모달 */
   .modal-backdrop {
@@ -148,9 +153,9 @@
   @media (max-width: 520px) {
     .m-full { display: none; }
     .m-abbr { display: inline; }
-    th:nth-child(3), td:nth-child(3) { width: 5%; }
-    th:nth-child(2), td:nth-child(2) { width: 18%; }
-    th:nth-child(4), td:nth-child(4) { width: 14%; }
+    .table-box th:nth-child(3), .table-box td:nth-child(3) { width: 5%; }
+    .table-box th:nth-child(2), .table-box td:nth-child(2) { width: 18%; }
+    .table-box th:nth-child(4), .table-box td:nth-child(4) { width: 14%; }
   }
 </style>
 </head>
