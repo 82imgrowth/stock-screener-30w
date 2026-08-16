@@ -354,12 +354,14 @@ function renderReports(code) {
   const cnt = document.getElementById("rp-count");
   if (!reports) {
     cnt.textContent = "";
+    list.style.maxHeight = "";
     list.innerHTML = '<div class="rp-empty">리포트 정보를 불러오는 중…</div>';
     return;
   }
   const items = reports[code] || [];
   cnt.textContent = items.length ? `${items.length}건` : "";
   if (!items.length) {
+    list.style.maxHeight = "";
     list.innerHTML = '<div class="rp-empty">등록된 리포트가 없습니다.<br>증권사 리포트는 주로 대형·중형주에 나옵니다.</div>';
     return;
   }
@@ -371,16 +373,37 @@ function renderReports(code) {
     </a>`;
   }).join("");
   list.scrollTop = 0;
+  capListHeight(list);
+}
+
+// 목록은 10개까지만 보이고 나머지는 스크롤. 제목 길이에 따라 항목 높이가 달라
+// 고정 px 대신 10번째 항목의 실제 위치로 높이를 잡는다.
+const REPORT_VISIBLE = 10;
+function capListHeight(list) {
+  list.style.maxHeight = "";
+  const items = list.querySelectorAll(".rp-item");
+  if (items.length <= REPORT_VISIBLE) return;   // 적으면 제한 없이 그대로
+  const cs = getComputedStyle(list);   // 목록 위아래 여백을 더해야 마지막 항목이 안 잘린다
+  const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  const fit = () => {
+    const it = list.querySelectorAll(".rp-item");
+    return Math.ceil(it[REPORT_VISIBLE - 1].getBoundingClientRect().bottom
+                     - it[0].getBoundingClientRect().top + pad);
+  };
+  // 높이를 줄이면 스크롤바가 생겨 폭이 좁아지고 제목이 다시 줄바꿈돼 항목이 커진다.
+  // 그래서 한 번 적용한 뒤 다시 재서 맞춘다.
+  list.style.maxHeight = fit() + "px";
+  list.style.maxHeight = fit() + "px";
 }
 
 function openChart(s) {
   if (!s) return;
-  renderReports(s.code);
   document.getElementById("m-name").textContent = s.name;
   document.getElementById("m-code").textContent = `${s.code} · ${s.sector}`;
   document.getElementById("m-gap").textContent = `30주선 +${s.gap_pct.toFixed(1)}%`;
   document.getElementById("m-naver").href = `https://finance.naver.com/item/main.naver?code=${s.code}`;
   modal.classList.add("open");
+  renderReports(s.code);   // 모달이 보인 뒤라야 목록 높이를 잴 수 있다
 
   const box = document.getElementById("chart-box");
   if (chart) { chart.remove(); chart = null; }
