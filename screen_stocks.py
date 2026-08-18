@@ -9,7 +9,7 @@ import sys
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import FinanceDataReader as fdr
@@ -83,6 +83,9 @@ def etf_extra_excluded(name: str) -> bool:
         or "배당" in name
     )
 
+
+# GitHub Actions 러너는 UTC라 datetime.now()를 그대로 쓰면 화면에 UTC가 찍힌다
+KST = timezone(timedelta(hours=9))
 
 DOCS = Path(__file__).parent / "docs"
 OUT_PATH = DOCS / "data.json"
@@ -388,7 +391,7 @@ def main():
     # 이전 실행 결과와 비교해 '최초 진입일(since)'을 유지 — 웹에서 최근 진입 종목에
     # NEW 배지를 띄우는 근거. 계속 30주선 위면 날짜를 보존하고, 이탈했다 재진입하면
     # 새 날짜로 갱신된다(직전 결과에 없으면 오늘이 최초 진입일).
-    now = datetime.now()
+    now = datetime.now(KST)
     today = now.strftime("%Y-%m-%d")
     prev_since = {}
     if OUT_PATH.exists():
@@ -410,7 +413,7 @@ def main():
 
     results.sort(key=lambda x: x["marcap"], reverse=True)
     out = {
-        "updated": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "updated": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
         "total_scanned": total,
         "count": len(results),
         "unverified": unverified,
