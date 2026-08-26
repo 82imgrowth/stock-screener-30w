@@ -81,6 +81,23 @@
   #scale-toggle[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
   .empty { padding: 40px; text-align: center; color: var(--muted); }
   @media (max-width: 640px) { #heatmap { height: 460px; } }
+  /* 30주선 아래 구성종목. 히트맵은 통과 종목만 그리므로 나머지를 여기 나열한다. */
+  #below-box { margin-top: 18px; }
+  .below-head { font-size: 0.85rem; color: var(--muted); margin-bottom: 8px; }
+  .below-head b { color: var(--text); }
+  .below-sort { opacity: .75; }
+  #below-list {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px;
+  }
+  #below-list button {
+    display: inline-flex; align-items: baseline; gap: 5px;
+    font-size: 0.8rem; font-family: inherit; color: var(--text); cursor: pointer;
+    background: none; border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px;
+  }
+  #below-list button:hover { background: var(--hover); border-color: var(--accent); }
+  #below-list button i { font-style: normal; font-size: 0.72rem; color: var(--down); }
 
   /* 차트 모달 (30Weeks 페이지와 동일) */
   .modal-backdrop {
@@ -97,6 +114,7 @@
   .modal-head h2 { font-size: 1.05rem; }
   .modal-head .sub { color: var(--muted); font-size: 0.82rem; }
   .modal-head .gap-badge { color: var(--up); font-weight: 600; font-size: 0.9rem; }
+  .modal-head .gap-badge.down { color: var(--down); }
   .modal-head a { margin-left: auto; color: var(--accent); font-size: 0.82rem; text-decoration: none; }
   .modal-close { background: none; border: none; color: var(--muted); font-size: 1.4rem; cursor: pointer; padding: 0 4px; line-height: 1; }
   .modal-close:hover { color: var(--text); }
@@ -156,6 +174,11 @@
     <i style="background:#4a4f5a"></i><span>보합</span>
     <i style="background:#c0392b"></i><span>상승</span>
   </div>
+  <div id="below-box" style="display:none">
+    <div class="below-head">30주선 아래 <b id="below-n">0</b>종목<span id="below-note"></span>
+      <span class="below-sort">· 30주선에 가까운 순</span></div>
+    <div id="below-list"></div>
+  </div>
 </div>
 
 <div class="modal-backdrop" id="modal">
@@ -182,6 +205,8 @@
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 let stocks = [], dataVersion = "", currentSector = null;
+let belowMeta = {};     // 30주선 아래 종목 코드 → [이름, 섹터, 이격률]
+                        // (data.json엔 통과 종목만 있어 below.json이 대신 싣는다)
 let reports = null;   // { 종목코드: [{title, broker, date, pdf, nid}] }
 let sectorTotals = {};  // { 섹터: 그 섹터의 전체 종목 수 } — 30주선 위 비중의 분모
 // 섹터 화면: 크기 = 종목 수 (어느 섹터에 30주선 위 종목이 몰렸는지 = 섹터 강도)
@@ -372,6 +397,7 @@ function showSectors(push = false) {
     `<span class="cur">전체 섹터</span><span class="cnt">${items.length}개 · `
     + `${sectorLabel({ count: stocks.length, total: Object.values(sectorTotals).reduce((a, b) => a + b, 0) })}</span>`;
   setLegend("종목 수", false);
+  document.getElementById("below-box").style.display = "none";
   document.getElementById("heatmap").classList.add("sector-view");
   applyMinArea(items);   // 컨테이너 크기를 읽어야 하므로 sector-view를 붙인 뒤에
   renderTiles(items, t => showSector(t.key, true), sectorLabel);
@@ -395,11 +421,65 @@ function showSector(name, push = false) {
   document.getElementById("heatmap").classList.remove("sector-view");
   renderTiles(items, t => openChart(stocks.find(s => s.code === t.code)),
               t => `${t.pct >= 0 ? "+" : ""}${t.pct.toFixed(2)}%`);
+  renderBelow(name, list.length);
 }
+
+// 히트맵 아래에 그 섹터의 30주선 미달 종목을 나열한다(가나다순).
+// 미달 종목도 차트·리포트를 만들어 두었으므로 통과 종목과 같은 모달을 연다.
+function renderBelow(sector, hit) {
+  const box = document.getElementById("below-box");
+  // 30주선에 가까운 순(이격률 내림차순). -3%가 -45%보다 먼저 온다.
+  // 곧 돌파할 수 있는 종목이 앞에 오는 게 목록을 보는 이유다.
+  const rows = Object.keys(belowMeta)
+    .filter(c => belowMeta[c][1] === sector)
+    .map(belowStock)
+    .sort((a, b) => b.gap_pct - a.gap_pct);
+  if (!rows.length) { box.style.display = "none"; return; }
+  document.getElementById("below-n").textContent = rows.length;
+  // 상장 30주 미만(신규상장)이거나 데이터를 못 받은 종목은 위/아래 어느 쪽에도
+  // 안 잡힌다. 분모와 숫자가 안 맞는 이유를 밝힌다.
+  const missing = (sectorTotals[sector] || 0) - hit - rows.length;
+  document.getElementById("below-note").textContent =
+    missing > 0 ? ` · 데이터 부족 ${missing}종목 제외` : "";
+  document.getElementById("below-list").innerHTML = rows.map(r =>
+    `<button type="button" data-code="${r.code}">${esc(r.name)}` +
+    `<i>${r.gap_pct.toFixed(1)}%</i></button>`).join("");
+  box.style.display = "";
+}
+
+// 모달이 쓰는 필드(name/code/sector/gap_pct)만 below.json으로 채운다
+function belowStock(code) {
+  const m = belowMeta[code] || [code, "-", 0];
+  return { code, name: m[0], sector: m[1], gap_pct: m[2] };
+}
+
+document.getElementById("below-list").addEventListener("click", e => {
+  const btn = e.target.closest("button[data-code]");
+  if (btn) openChart(belowStock(btn.dataset.code));
+});
 
 // ── 차트 모달 ──
 const modal = document.getElementById("modal");
 let chart = null;
+
+// 차트 JSON은 용량 때문에 압축 형식이다(종목당 22.7KB → 6.5KB). 30주선 아래
+// 종목까지 차트를 만들면 파일이 2,450개라 원래 형식으로는 53MB가 된다.
+//   t0: 첫 봉 날짜, d: t0로부터 며칠 뒤인지, c: [시,고,저,종,거래량], m: 30주선
+// 예전 형식({candles, ma30})으로 받은 파일도 그대로 통한다.
+function expandChart(d) {
+  if (d.candles) return d;                       // 구 형식
+  const t0 = Date.parse(d.t0 + "T00:00:00Z"), DAY = 86400000;
+  const candles = d.d.map((off, i) => {
+    const c = d.c[i];
+    return {
+      time: new Date(t0 + off * DAY).toISOString().slice(0, 10),
+      open: c[0], high: c[1], low: c[2], close: c[3], volume: c[4],
+    };
+  });
+  const ma30 = [];
+  d.m.forEach((v, i) => { if (v != null) ma30.push({ time: candles[i].time, value: v }); });
+  return { candles, ma30 };
+}
 
 function themeColors() {
   const css = getComputedStyle(document.documentElement);
@@ -465,7 +545,10 @@ function openChart(s) {
   if (!s) return;
   document.getElementById("m-name").textContent = s.name;
   document.getElementById("m-code").textContent = `${s.code} · ${s.sector}`;
-  document.getElementById("m-gap").textContent = `30주선 +${s.gap_pct.toFixed(1)}%`;
+  // 30주선 아래 종목(테마 화면)은 이격률이 음수라 부호와 색을 나눈다
+  const gap = document.getElementById("m-gap");
+  gap.textContent = `30주선 ${s.gap_pct >= 0 ? "+" : ""}${s.gap_pct.toFixed(1)}%`;
+  gap.classList.toggle("down", s.gap_pct < 0);
   document.getElementById("m-naver").href = `https://finance.naver.com/item/main.naver?code=${s.code}`;
   modal.classList.add("open");
   renderReports(s.code);   // 모달이 보인 뒤라야 목록 높이를 잴 수 있다
@@ -476,7 +559,8 @@ function openChart(s) {
 
   fetch(`charts/${s.code}.json?v=${encodeURIComponent(dataVersion)}`)
     .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-    .then(d => {
+    .then(raw => {
+      const d = expandChart(raw);
       if (!modal.classList.contains("open")) return;
       const c = themeColors();
       chart = LightweightCharts.createChart(box, {
@@ -565,10 +649,13 @@ addEventListener("popstate", e => {
   name && stocks.some(s => s.sector === name) ? showSector(name) : showSectors();
 });
 
-fetch("data.json", { cache: "no-cache" })
-  .then(r => r.json())
-  .then(d => {
+Promise.all([
+  fetch("data.json", { cache: "no-cache" }).then(r => r.json()),
+  fetch("below.json", { cache: "no-cache" }).then(r => (r.ok ? r.json() : null)),
+])
+  .then(([d, bl]) => {
     dataVersion = d.updated;
+    belowMeta = (bl && bl.stocks) || {};
     // ETF는 개별 기업이 아니라 섹터 강도 판단을 흐려서 제외 (30Weeks 페이지에는 그대로 있음)
     stocks = d.stocks.filter(s => s.sector && s.market !== "ETF");
     sectorTotals = d.sector_totals || {};

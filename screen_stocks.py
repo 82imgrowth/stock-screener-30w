@@ -92,6 +92,7 @@ OUT_PATH = DOCS / "data.json"
 CHART_DIR = DOCS / "charts"
 REPORT_PATH = DOCS / "reports.json"
 THEME_PATH = DOCS / "themes.json"
+BELOW_PATH = DOCS / "below.json"
 
 # 네이버 종목분석 리포트. 정적 사이트라 브라우저에서 네이버를 직접 부르면 CORS로
 # 막히므로 스크리닝 때 미리 받아 JSON으로 굽는다. 목록에 목표주가·투자의견은 없고
@@ -293,14 +294,19 @@ def get_listings() -> pd.DataFrame:
 
 
 def build_payload(weekly_ohlc: pd.DataFrame):
-    """주봉 OHLC DataFrame → 스크리닝 결과 + 차트 데이터. 30주선 아래면 None."""
+    """주봉 OHLC DataFrame → 지표 + 차트 데이터. 30주 미만이면 None.
+
+    30주선 아래 종목도 차트를 만든다. 테마 화면에서 미달 종목 이름을 눌러도
+    차트·리포트가 뜨게 하려면 통과 여부와 무관하게 차트가 필요하다.
+    통과 여부는 above 플래그로 알린다.
+    """
     close = weekly_ohlc["Close"].dropna()
     if len(close) < MA_WEEKS:
         return None
     ma30 = close.rolling(MA_WEEKS).mean()
     price = float(close.iloc[-1])
     last_ma = ma30.iloc[-1]
-    if pd.isna(last_ma) or price <= last_ma:
+    if pd.isna(last_ma):
         return None
 
     # 30주선 상향돌파 후 연속으로 위에 머문 주 수 (MA 계산 가능 구간 내에서)
@@ -312,29 +318,42 @@ def build_payload(weekly_ohlc: pd.DataFrame):
         weeks_above += 1
 
     tail = weekly_ohlc.tail(CHART_WEEKS)
-    candles = [
-        {
-            "time": ts.strftime("%Y-%m-%d"),
-            "open": round(float(r.Open), 2),
-            "high": round(float(r.High), 2),
-            "low": round(float(r.Low), 2),
-            "close": round(float(r.Close), 2),
-            "volume": int(r.Volume) if pd.notna(r.Volume) else 0,
-        }
-        for ts, r in tail.iterrows()
-        if not (pd.isna(r.Open) or pd.isna(r.Close))
-    ]
-    ma_points = [
-        {"time": ts.strftime("%Y-%m-%d"), "value": round(float(v), 2)}
-        for ts, v in ma30.loc[tail.index[0]:].items()
-        if not pd.isna(v)
-    ]
     return {
+        "above": bool(price > last_ma),
         "price": price,
         "ma30": round(float(last_ma), 2),
         "gap_pct": round((price / float(last_ma) - 1) * 100, 2),
         "weeks_above": weeks_above,
-        "chart": {"candles": candles, "ma30": ma_points},
+        "chart": compact_chart(tail, ma30),
+    }
+
+
+def _num(x):
+    """정수로 떨어지면 정수로 — 국내 주가는 대부분 원 단위라 소수점이 낭비다."""
+    i = round(float(x))
+    return i if abs(float(x) - i) < 0.005 else round(float(x), 2)
+
+
+def compact_chart(tail: pd.DataFrame, ma30: pd.Series) -> dict:
+    """차트 JSON 압축 형식. 종목당 22.7KB → 6.5KB (3.5배).
+
+    키 이름을 봉마다 반복하고 날짜를 문자열로 쓰는 게 용량의 대부분이었다.
+    30주선 아래 종목까지 차트를 만들면 파일이 530개에서 2,450개로 늘어나
+    원래 형식으로는 53MB가 되므로 형식을 줄여야 한다.
+      t0: 첫 봉 날짜, d: t0로부터의 일수(주봉이라 대개 7의 배수),
+      c: [시가, 고가, 저가, 종가, 거래량], m: 30주선(값 없으면 null)
+    """
+    rows = [(ts, r) for ts, r in tail.iterrows()
+            if not (pd.isna(r.Open) or pd.isna(r.Close))]
+    if not rows:
+        return {"t0": "", "d": [], "c": [], "m": []}
+    t0 = rows[0][0]
+    return {
+        "t0": t0.strftime("%Y-%m-%d"),
+        "d": [(ts - t0).days for ts, _ in rows],
+        "c": [[_num(r.Open), _num(r.High), _num(r.Low), _num(r.Close),
+               int(r.Volume) if pd.notna(r.Volume) else 0] for _, r in rows],
+        "m": [None if pd.isna(ma30.get(ts)) else _num(ma30.get(ts)) for ts, _ in rows],
     }
 
 
@@ -406,11 +425,16 @@ def main():
         if row.Market != "ETF"
     )
 
+    # 테마는 스크리닝보다 먼저 받는다. 테마 화면이 목록보다 먼저 필요한 건 아니지만,
+    # 수집이 실패하면 그 사실을 9분짜리 스크리닝 전에 알 수 있다.
+    raw_themes = get_themes()
+
     # 차트 표시 기간 + MA 계산 워밍업 + 여유
     start = (datetime.today() - timedelta(weeks=CHART_WEEKS + MA_WEEKS + 8)).strftime("%Y-%m-%d")
 
     results = []
     charts = {}
+    below = {}          # 30주선 아래 개별주: 코드 → [이름, 섹터, 이격률]
     unverified = []
     done = 0
     t0 = time.time()
@@ -427,19 +451,28 @@ def main():
             res, status = fut.result()
             if status != "ok":
                 unverified.append({"code": row.Code, "name": row.Name, "reason": status})
-            if res:
-                charts[row.Code] = res.pop("chart")
+            if not res:
+                continue
+            chart = res.pop("chart")
+            sector = resolve_sector(row.Code, row.Name, row.Market, sector_map)
+            if res.pop("above"):
+                charts[row.Code] = chart
                 results.append(
                     {
                         "code": row.Code,
                         "name": row.Name,
                         "market": row.Market,
                         "marcap": int(row.Marcap or 0),
-                        "sector": resolve_sector(row.Code, row.Name, row.Market, sector_map),
+                        "sector": sector,
                         "change_pct": round(float(row.ChangeRate or 0), 2),
                         **res,
                     }
                 )
+            elif row.Market != "ETF":
+                # 미달 종목도 차트를 남긴다. 섹터·테마 화면에서 미달 종목 이름을
+                # 눌러도 차트가 뜬다. ETF는 두 화면 모두에서 빼므로 제외한다.
+                charts[row.Code] = chart
+                below[row.Code] = [row.Name, sector, res["gap_pct"]]
 
     # 이전 실행 결과와 비교해 '최초 진입일(since)'을 유지 — 웹에서 최근 진입 종목에
     # NEW 배지를 띄우는 근거. 계속 30주선 위면 날짜를 보존하고, 이탈했다 재진입하면
@@ -486,21 +519,38 @@ def main():
         )
     passed = {r["code"] for r in results}
 
-    # 테마: 통과 종목만 남겨 저장(구성 전체 수는 비율 분모로 유지).
+    # 테마: 통과 종목(codes)과 미달 종목(below)을 나눠 저장한다.
     # 한 종목이 여러 테마에 중복 소속되므로 합계는 전체 종목 수와 맞지 않는다.
-    themes = [
-        {"name": t["name"], "total": t["total"],
-         "codes": [c for c in t["codes"] if c in passed]}
-        for t in get_themes()
-    ]
-    # 구성종목이 적은 테마도 그대로 둔다(순위 목록이라 표본 수를 같이 보여주면 판단 가능)
+    themes, used = [], set()
+    for t in raw_themes:
+        hit = [c for c in t["codes"] if c in passed]
+        # 스크리닝하지 못한 코드는 버린다. 네이버 테마에는 우리가 제외한
+        # ETF·스팩이나 상장폐지 종목이 섞여 있다.
+        miss = [c for c in t["codes"] if c in below]
+        # 스크리닝 대상이 하나도 없는 테마는 버린다. 스팩 테마가 여기 걸리는데,
+        # 스팩은 아예 스캔하지 않으므로 '0/41 (0%)'가 사실과 다른 값이 된다.
+        if not hit and not miss:
+            continue
+        themes.append({"name": t["name"], "total": t["total"],
+                       "codes": hit, "below": miss})
+        used.update(miss)
     THEME_PATH.write_text(
         json.dumps({"updated": out["updated"], "themes": themes}, ensure_ascii=False),
         encoding="utf-8",
     )
 
-    # 통과 종목의 증권사 리포트 (수집 실패해도 스크리닝 결과는 그대로 유지)
-    reports = get_reports(passed)
+    # 30주선 아래 종목은 data.json에 없다(거긴 통과 종목만). 섹터·테마 화면이
+    # 미달 종목 목록을 그리려면 이름·섹터·이격률이 필요해 따로 싣는다.
+    # 두 화면이 같은 사전을 쓰므로 파일 하나로 둔다.
+    BELOW_PATH.write_text(
+        json.dumps({"updated": out["updated"], "stocks": below}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    # 통과 종목 + 테마에 걸린 미달 종목의 증권사 리포트.
+    # 리포트 목록은 어차피 400페이지를 통째로 받으므로 대상만 넓히면 된다.
+    # (수집 실패해도 스크리닝 결과는 그대로 유지)
+    reports = get_reports(passed | set(below))
     REPORT_PATH.write_text(
         json.dumps({"updated": out["updated"], "reports": reports}, ensure_ascii=False),
         encoding="utf-8",
@@ -509,7 +559,12 @@ def main():
     print(f"완료: {len(results)}/{total} 종목이 30주선 위 → {OUT_PATH}")
     print(f"차트 파일 {len(charts)}개 생성 → {CHART_DIR}")
     print(f"리포트 파일 → {REPORT_PATH} ({REPORT_PATH.stat().st_size // 1024}KB)")
-    print(f"테마 파일 → {THEME_PATH} ({len(themes)}개 테마)")
+    print(f"테마 파일 → {THEME_PATH} "
+          f"({len(themes)}개 테마, 미달 {len(used)}종목 참조, "
+          f"{THEME_PATH.stat().st_size // 1024}KB)")
+    print(f"미달 파일 → {BELOW_PATH} "
+          f"({len(below)}종목, {BELOW_PATH.stat().st_size // 1024}KB)")
+    print(f"차트 대상: 통과 {len(passed)} + 미달 {len(below)} = {len(charts)}종목")
     if unverified:
         print(f"[주의] 검증 불가 {len(unverified)}종목 (데이터 오류로 판정 제외):")
         for u in unverified:
