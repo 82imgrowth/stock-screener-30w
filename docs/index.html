@@ -132,6 +132,7 @@
   .modal-head h2 { font-size: 1.05rem; }
   .modal-head .sub { color: var(--muted); font-size: 0.82rem; }
   .modal-head .gap-badge { color: var(--up); font-weight: 600; font-size: 0.9rem; }
+  .modal-head .gap-badge.down { color: var(--down); }
   .modal-head a { margin-left: auto; color: var(--accent); font-size: 0.82rem; text-decoration: none; }
   .modal-close {
     background: none; border: none; color: var(--muted); font-size: 1.4rem;
@@ -332,6 +333,25 @@ document.getElementById("new-only").addEventListener("click", e => {
 const modal = document.getElementById("modal");
 let chart = null;
 
+// 차트 JSON은 용량 때문에 압축 형식이다(종목당 22.7KB → 6.5KB). 30주선 아래
+// 종목까지 차트를 만들면 파일이 2,450개라 원래 형식으로는 53MB가 된다.
+//   t0: 첫 봉 날짜, d: t0로부터 며칠 뒤인지, c: [시,고,저,종,거래량], m: 30주선
+// 예전 형식({candles, ma30})으로 받은 파일도 그대로 통한다.
+function expandChart(d) {
+  if (d.candles) return d;                       // 구 형식
+  const t0 = Date.parse(d.t0 + "T00:00:00Z"), DAY = 86400000;
+  const candles = d.d.map((off, i) => {
+    const c = d.c[i];
+    return {
+      time: new Date(t0 + off * DAY).toISOString().slice(0, 10),
+      open: c[0], high: c[1], low: c[2], close: c[3], volume: c[4],
+    };
+  });
+  const ma30 = [];
+  d.m.forEach((v, i) => { if (v != null) ma30.push({ time: candles[i].time, value: v }); });
+  return { candles, ma30 };
+}
+
 function themeColors() {
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
   const css = getComputedStyle(document.documentElement);
@@ -395,7 +415,10 @@ function capListHeight(list) {
 function openChart(s) {
   document.getElementById("m-name").textContent = s.name;
   document.getElementById("m-code").textContent = `${s.code} · ${s.market}`;
-  document.getElementById("m-gap").textContent = `30주선 +${s.gap_pct.toFixed(1)}%`;
+  // 30주선 아래 종목(테마 화면)은 이격률이 음수라 부호와 색을 나눈다
+  const gap = document.getElementById("m-gap");
+  gap.textContent = `30주선 ${s.gap_pct >= 0 ? "+" : ""}${s.gap_pct.toFixed(1)}%`;
+  gap.classList.toggle("down", s.gap_pct < 0);
   document.getElementById("m-naver").href = `https://finance.naver.com/item/main.naver?code=${s.code}`;
   modal.classList.add("open");
   renderReports(s.code);
@@ -407,7 +430,8 @@ function openChart(s) {
   // 데이터 갱신 시각을 버전으로 붙여 갱신 때마다 새 URL로 요청 (캐시된 옛 차트 방지)
   fetch(`charts/${s.code}.json?v=${encodeURIComponent(dataVersion)}`)
     .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-    .then(d => {
+    .then(raw => {
+      const d = expandChart(raw);
       if (!modal.classList.contains("open")) return;
       const c = themeColors();
       chart = LightweightCharts.createChart(box, {
