@@ -20,7 +20,7 @@
     font-family: "Pretendard", -apple-system, "Malgun Gothic", sans-serif;
     background: var(--bg); color: var(--text); padding: 24px 16px; line-height: 1.5;
   }
-  .wrap { max-width: 1100px; margin: 0 auto; }
+  .wrap { max-width: 1440px; margin: 0 auto; }
   .topnav { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
   .topnav a {
     padding: 8px 16px; font-size: 0.92rem; font-weight: 600; text-decoration: none;
@@ -47,7 +47,9 @@
      PC(넓음)는 가로형, 모바일(좁음)은 세로형이 되도록 높이를 나눈다. */
   #heatmap.sector-view { height: 820px; }
   @media (max-width: 760px) {
-    #heatmap.sector-view { height: 1360px; }
+    /* 좁은 폭에서는 타일이 세로로 길게 쌓인다. 크기 지수를 올린 만큼 작은 타일이
+       눌리므로 높이를 늘려 최소 타일 높이를 35px대로 되돌린다(1360px에서는 21px). */
+    #heatmap.sector-view { height: 1550px; }
   }
   .tile {
     position: absolute; overflow: hidden; cursor: pointer;
@@ -187,13 +189,44 @@ let sectorTotals = {};  // { 섹터: 그 섹터의 전체 종목 수 } — 30주
 let sqrtScale = true;
 const areaOf = cap => (sqrtScale ? Math.sqrt(cap) : cap);
 
-// 종목 수가 적은 섹터는 최소 블럭으로 눌러 큰 섹터의 시각적 대비를 살린다.
-const MINOR_MAX = 5;      // 이하면 최소 블럭
-// 최소 블럭도 종목 수에 따라 조금씩 커지게 한다(1종목 1.25 … 5종목 2.25).
-// 고정값이면 1종목과 3종목 타일이 똑같아 보여서 차이를 못 읽는다.
-const MINOR_BASE = 1.0;
-const MINOR_STEP = 0.25;
-const minorValue = n => MINOR_BASE + n * MINOR_STEP;
+// 타일 넓이를 종목 수에 그대로 비례시키면 39종목과 1종목의 면적비가 31배,
+// 변 길이로는 4배(237px vs 60px)뿐이라 강한 섹터가 눈에 띄지 않는다.
+// 넓이를 종목 수의 1.5제곱으로 잡아 면적비를 최대한 벌린다(PC 기준 약 100배).
+const SIZE_POW = 1.5;
+// 지수만 쓰면 1~2종목 타일이 이름을 못 담을 만큼 뭉개진다. 바닥값이 필요한데,
+// 고정 상수로 두면 컨테이너가 좁은 폰에서 26x31까지 눌려 깨진다(PC는 45x41).
+// 그래서 바닥을 상수로 두지 않고 '최소 타일 면적'에서 역산한다.
+const MIN_TILE_PX = 1900;   // 이름 6~8자 + 비율이 7px 글씨로 들어가는 넓이
+const FLOOR_GRAD = 0.16;    // 바닥에 걸린 타일끼리도 1·2·3종목 차이가 보이게
+
+// 바닥값 f를 올리면 전체 합도 같이 커져 각 타일 몫이 다시 줄어든다.
+// 고정점이라 몇 번 반복하면 수렴한다(보통 4~5회).
+function applyMinArea(items) {
+  const box = document.getElementById("heatmap");
+  const boxArea = box.clientWidth * box.clientHeight;
+  const base = items.map(t => Math.pow(t.count, SIZE_POW));
+  const valuesAt = f => items.map((t, k) => Math.max(base[k], f * (1 + FLOOR_GRAD * t.count)));
+  let f = 0;
+  if (boxArea) {
+    const share = MIN_TILE_PX / boxArea;   // 최소 타일이 차지해야 할 넓이 비율
+    for (let i = 0; i < 20; i++) {
+      const vals = valuesAt(f);
+      const sum = vals.reduce((a, b) => a + b, 0);
+      if (Math.min(...vals) / sum >= share) break;
+      f = (share * sum) / (1 + FLOOR_GRAD);
+    }
+  }
+  const vals = valuesAt(f);
+  items.forEach((t, k) => { t.value = vals[k]; });
+}
+
+// 작은 타일은 '식품과기본식료품소매'(10자) 같은 긴 이름을 통째로 담으려다
+// 글자가 6px까지 눌리고, 그걸 피하려면 타일을 키워야 해서 대비가 죽는다.
+// 좁은 타일에서는 이름을 잘라 글자 크기를 지키고 타일은 최소로 줄인다.
+// 잘린 전체 이름은 타일 title(툴팁)에 그대로 남는다.
+const NAME_CLIP_MAX = 8;   // 좁은 타일에 표시할 최대 글자 수
+const NAME_CLIP_MIN = 6;   // 아주 좁아도 이만큼은 보여준다
+const clipName = (name, n) => (name.length > n ? name.slice(0, n - 1) + "…" : name);
 
 const NEW_DAYS = 3;
 function isNew(s) {
@@ -289,18 +322,29 @@ function renderTiles(items, onClick, subLabel) {
     // 부가 정보(종목수·등락률)는 자리가 있을 때만 덧붙인다.
     // 이름 길이까지 감안해 글자 크기를 정한다: L글자가 w폭에 줄바꿈돼 h높이 안에
     // 들어가려면 fs ≲ sqrt(w*h / (L*1.1)). 이 상한을 지켜야 이름이 안 잘린다.
-    const L = Math.max(t.label.length, 1);
+    // 좁은 타일은 이름을 최대 8자로 자른다. 글자 수가 줄면 같은 글자 크기를
+    // 훨씬 작은 타일에도 담을 수 있어 최소 타일을 더 줄일 수 있다.
+    const narrow = w < 100;
+    const name = narrow ? clipName(t.label, NAME_CLIP_MAX) : t.label;
+    const L = Math.max(name.length, 1);
     const fitFs = Math.sqrt((w * h) / (L * 1.1));
     let fs = Math.max(6, Math.min(22, Math.sqrt(area) / 6, w / 3.2, fitFs));
     // 라벨은 한 줄 텍스트라 면적보다 '폭'이 관건이다. 최소 블럭은 36~51px,
     // 주요 섹터는 147px 이상으로 갈리므로 100px을 경계로 정보량을 나눈다.
-    const roomy = w >= 100 && h > fs * 2.4;   // 좁으면 비율만
+    const roomy = !narrow && h > fs * 2.4;    // 좁으면 비율만
     const big = w >= 180 && h > fs * 4;       // 넉넉하면 NEW 개수까지
     // 좁은 타일은 비율을 이름과 같은 크기로 키운다. 두 줄이 들어가도록 살짝 줄임.
     if (!roomy) fs = Math.max(6, Math.min(fs, h / 2.7, w / 4.4));
+    // fs가 위에서 더 줄었을 수 있으니, 실제로 들어가는 글자 수로 한 번 더 자른다.
+    // (한 줄 w/fs자 × h/(fs*1.15)줄, 마지막 줄에 비율 라벨 자리를 한 줄 비워둔다)
+    let shown = name;
+    if (narrow) {
+      const cap = Math.floor(w / fs) * Math.max(1, Math.floor(h / (fs * 1.15)) - 1);
+      shown = clipName(name, Math.min(NAME_CLIP_MAX, Math.max(NAME_CLIP_MIN, cap)));
+    }
     el.innerHTML =
       (t.isNew && area > 3000 ? `<div class="t-new">NEW</div>` : "") +
-      `<div class="t-name" style="font-size:${fs}px">${t.label}</div>` +
+      `<div class="t-name" style="font-size:${fs}px">${shown}</div>` +
       `<div class="t-val" style="font-size:${roomy ? Math.max(8, fs * 0.72) : fs}px">${subLabel(t, { compact: !roomy, big })}</div>`;
     el.title = `${t.label}\n${stripBr(subLabel(t))}\n시가총액 ${fmtMarcap(t.cap)}`;
     el.addEventListener("click", () => onClick(t));
@@ -319,20 +363,17 @@ function showSectors(push = false) {
     if (isNew(s)) b.nw++;
   }
   // 크기 = 종목 수. 시총으로 하면 반도체가 78%를 먹어 섹터 강도를 못 읽는다.
-  // 5종목 이하는 최소 블럭으로 눌러 강한 섹터가 도드라지게 하되, 이름은 모두 표시한다.
-  const items = Object.entries(bySector).map(([name, b]) => {
-    const minor = b.n <= MINOR_MAX;
-    return {
-      label: name, value: minor ? minorValue(b.n) : b.n, cap: b.cap,
-      pct: b.cap ? b.wsum / b.cap : 0, count: b.n, newCount: b.nw,
-      total: sectorTotals[name] || 0, key: name,
-    };
-  });
+  const items = Object.entries(bySector).map(([name, b]) => ({
+    label: name, value: 0, cap: b.cap,
+    pct: b.cap ? b.wsum / b.cap : 0, count: b.n, newCount: b.nw,
+    total: sectorTotals[name] || 0, key: name,
+  }));
   document.getElementById("crumb").innerHTML =
     `<span class="cur">전체 섹터</span><span class="cnt">${items.length}개 · `
     + `${sectorLabel({ count: stocks.length, total: Object.values(sectorTotals).reduce((a, b) => a + b, 0) })}</span>`;
   setLegend("종목 수", false);
   document.getElementById("heatmap").classList.add("sector-view");
+  applyMinArea(items);   // 컨테이너 크기를 읽어야 하므로 sector-view를 붙인 뒤에
   renderTiles(items, t => showSector(t.key, true), sectorLabel);
 }
 
