@@ -42,8 +42,13 @@
 
   /* 히트맵 */
   #heatmap { position: relative; width: 100%; height: 620px; background: var(--border); border-radius: 10px; overflow: hidden; }
-  /* 섹터 화면은 가로 배열을 유지하되 면적을 키워 종목 수 대비를 살린다 */
-  #heatmap.sector-view { height: 840px; }
+  /* squarified treemap은 짧은 변을 기준으로 줄을 쌓는다. 그래서 컨테이너가
+     가로로 길면 타일이 좌우로, 세로로 길면 위아래로 진행한다.
+     PC(넓음)는 가로형, 모바일(좁음)은 세로형이 되도록 높이를 나눈다. */
+  #heatmap.sector-view { height: 820px; }
+  @media (max-width: 760px) {
+    #heatmap.sector-view { height: 1360px; }
+  }
   .tile {
     position: absolute; overflow: hidden; cursor: pointer;
     border: 1px solid rgba(0,0,0,0.25);
@@ -175,6 +180,7 @@
 <script>
 let stocks = [], dataVersion = "", currentSector = null;
 let reports = null;   // { 종목코드: [{title, broker, date, pdf, nid}] }
+let sectorTotals = {};  // { 섹터: 그 섹터의 전체 종목 수 } — 30주선 위 비중의 분모
 // 섹터 화면: 크기 = 종목 수 (어느 섹터에 30주선 위 종목이 몰렸는지 = 섹터 강도)
 // 종목 화면: 크기 = 시가총액. 대형주 쏠림이 심하면 sqrt 보정으로 압축(순서는 유지)
 let sqrtScale = true;
@@ -182,13 +188,29 @@ const areaOf = cap => (sqrtScale ? Math.sqrt(cap) : cap);
 
 // 종목 수가 적은 섹터는 최소 블럭으로 눌러 큰 섹터의 시각적 대비를 살린다.
 const MINOR_MAX = 5;      // 이하면 최소 블럭
-const MINOR_UNIT = 0.45;  // 최소 블럭의 크기 가중치(종목 수 환산)
+// 최소 블럭도 종목 수에 따라 조금씩 커지게 한다(1종목 1.25 … 5종목 2.25).
+// 고정값이면 1종목과 3종목 타일이 똑같아 보여서 차이를 못 읽는다.
+const MINOR_BASE = 1.0;
+const MINOR_STEP = 0.25;
+const minorValue = n => MINOR_BASE + n * MINOR_STEP;
 
 const NEW_DAYS = 3;
 function isNew(s) {
   if (!s.since) return false;
   const d = (Date.now() - new Date(s.since + "T00:00:00").getTime()) / 86400000;
   return d >= 0 && d < NEW_DAYS;
+}
+
+// 타일 라벨은 두 줄이라 <br>을 쓰는데, 툴팁(title)은 평문이라 줄바꿈으로 바꾼다
+const stripBr = h => h.replace(/<br>/g, "\n");
+
+// 타일 크기에 따라 정보량을 조절한다.
+//   작은 타일: 비율만 / 보통: 종목수·전체·비율 / 큰 타일: NEW 개수까지
+function sectorLabel(t, { compact, big } = {}) {
+  const pct = t.total ? `(${(t.count / t.total * 100).toFixed(0)}%)` : "";
+  if (compact) return pct || `${t.count}`;
+  const base = t.total ? `${t.count}/${t.total}종목 · ${pct}` : `${t.count}종목`;
+  return big && t.newCount ? `${base}<br>NEW ${t.newCount}` : base;
 }
 
 const fmt = n => n.toLocaleString("ko-KR");
@@ -262,24 +284,24 @@ function renderTiles(items, onClick, subLabel) {
     el.className = "tile" + (t.isNew ? " tile-new" : "");
     el.style.cssText = `left:${left}px;top:${top}px;width:${w}px;height:${h}px;background:${heatColor(t.pct)}`;
     const area = w * h;
-    if (t.noLabel) {                       // 소수 종목 섹터: 최소 블럭, 이름 없음
-      el.title = `${t.label}\n${subLabel(t)}\n시가총액 ${fmtMarcap(t.cap)}`;
-      el.addEventListener("click", () => onClick(t));
-      box.appendChild(el);
-      continue;
-    }
     // 이름은 가장 작은 타일에도 보이게 한다. 폭이 좁으면 글자를 더 줄이고,
     // 부가 정보(종목수·등락률)는 자리가 있을 때만 덧붙인다.
     // 이름 길이까지 감안해 글자 크기를 정한다: L글자가 w폭에 줄바꿈돼 h높이 안에
     // 들어가려면 fs ≲ sqrt(w*h / (L*1.1)). 이 상한을 지켜야 이름이 안 잘린다.
     const L = Math.max(t.label.length, 1);
     const fitFs = Math.sqrt((w * h) / (L * 1.1));
-    const fs = Math.max(6, Math.min(22, Math.sqrt(area) / 6, w / 3.2, fitFs));
+    let fs = Math.max(6, Math.min(22, Math.sqrt(area) / 6, w / 3.2, fitFs));
+    // 라벨은 한 줄 텍스트라 면적보다 '폭'이 관건이다. 최소 블럭은 36~51px,
+    // 주요 섹터는 147px 이상으로 갈리므로 100px을 경계로 정보량을 나눈다.
+    const roomy = w >= 100 && h > fs * 2.4;   // 좁으면 비율만
+    const big = w >= 180 && h > fs * 4;       // 넉넉하면 NEW 개수까지
+    // 좁은 타일은 비율을 이름과 같은 크기로 키운다. 두 줄이 들어가도록 살짝 줄임.
+    if (!roomy) fs = Math.max(6, Math.min(fs, h / 2.7, w / 4.4));
     el.innerHTML =
       (t.isNew && area > 3000 ? `<div class="t-new">NEW</div>` : "") +
       `<div class="t-name" style="font-size:${fs}px">${t.label}</div>` +
-      (area > 5200 && h > fs * 3 ? `<div class="t-val" style="font-size:${Math.max(8, fs * 0.72)}px">${subLabel(t)}</div>` : "");
-    el.title = `${t.label}\n${subLabel(t)}\n시가총액 ${fmtMarcap(t.cap)}`;
+      `<div class="t-val" style="font-size:${roomy ? Math.max(8, fs * 0.72) : fs}px">${subLabel(t, { compact: !roomy, big })}</div>`;
+    el.title = `${t.label}\n${stripBr(subLabel(t))}\n시가총액 ${fmtMarcap(t.cap)}`;
     el.addEventListener("click", () => onClick(t));
     box.appendChild(el);
   }
@@ -296,21 +318,21 @@ function showSectors(push = false) {
     if (isNew(s)) b.nw++;
   }
   // 크기 = 종목 수. 시총으로 하면 반도체가 78%를 먹어 섹터 강도를 못 읽는다.
-  // 5종목 이하는 최소 블럭(이름 없음)으로 눌러 강한 섹터가 도드라지게 한다.
+  // 5종목 이하는 최소 블럭으로 눌러 강한 섹터가 도드라지게 하되, 이름은 모두 표시한다.
   const items = Object.entries(bySector).map(([name, b]) => {
     const minor = b.n <= MINOR_MAX;
     return {
-      label: name, value: minor ? MINOR_UNIT : b.n, cap: b.cap,
+      label: name, value: minor ? minorValue(b.n) : b.n, cap: b.cap,
       pct: b.cap ? b.wsum / b.cap : 0, count: b.n, newCount: b.nw,
-      key: name, noLabel: minor,
+      total: sectorTotals[name] || 0, key: name,
     };
   });
   document.getElementById("crumb").innerHTML =
-    `<span class="cur">전체 섹터</span><span class="cnt">${items.length}개 · ${stocks.length}종목</span>`;
+    `<span class="cur">전체 섹터</span><span class="cnt">${items.length}개 · `
+    + `${sectorLabel({ count: stocks.length, total: Object.values(sectorTotals).reduce((a, b) => a + b, 0) })}</span>`;
   setLegend("종목 수", false);
   document.getElementById("heatmap").classList.add("sector-view");
-  renderTiles(items, t => showSector(t.key, true),
-    t => `${t.count}종목${t.newCount ? ` · NEW ${t.newCount}` : ""} ${t.pct >= 0 ? "+" : ""}${t.pct.toFixed(2)}%`);
+  renderTiles(items, t => showSector(t.key, true), sectorLabel);
 }
 
 function showSector(name, push = false) {
@@ -324,7 +346,8 @@ function showSector(name, push = false) {
   const newCount = items.filter(i => i.isNew).length;
   const crumb = document.getElementById("crumb");
   crumb.innerHTML = `<button id="back">← 전체</button><span class="cur">${name}</span>` +
-    `<span class="cnt">${list.length}종목${newCount ? ` · 최근 진입 ${newCount}` : ""}</span>`;
+    `<span class="cnt">${sectorLabel({ count: list.length, total: sectorTotals[name] || 0 })}` +
+    `${newCount ? ` · 최근 진입 ${newCount}` : ""}</span>`;
   crumb.querySelector("#back").addEventListener("click", () => showSectors(true));
   setLegend("시가총액", true);
   document.getElementById("heatmap").classList.remove("sector-view");
@@ -506,6 +529,7 @@ fetch("data.json", { cache: "no-cache" })
     dataVersion = d.updated;
     // ETF는 개별 기업이 아니라 섹터 강도 판단을 흐려서 제외 (30Weeks 페이지에는 그대로 있음)
     stocks = d.stocks.filter(s => s.sector && s.market !== "ETF");
+    sectorTotals = d.sector_totals || {};
     document.getElementById("meta").textContent =
       `기준: ${d.updated} · 30주선 위 ${fmt(stocks.length)}종목(ETF 제외)을 섹터별로 분류 · 타일이 클수록 해당 섹터에 30주선 위 종목이 많다는 뜻`;
     if (!stocks.length) {
