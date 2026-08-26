@@ -7,7 +7,7 @@ import re
 import shutil
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -352,6 +352,13 @@ def main():
     total = len(listings)
     print(f"대상 종목: {total}")
     sector_map = get_sector_map()
+    # 섹터별 '전체' 종목 수 — 히트맵에서 30주선 위 비중(몇/전체)을 내는 분모.
+    # 우리가 실제로 스캔한 개별 종목만 세야 비율이 맞는다(ETF 제외).
+    sector_totals = Counter(
+        resolve_sector(row.Code, row.Name, row.Market, sector_map)
+        for row in listings.itertuples(index=False)
+        if row.Market != "ETF"
+    )
 
     # 차트 표시 기간 + MA 계산 워밍업 + 여유
     start = (datetime.today() - timedelta(weeks=CHART_WEEKS + MA_WEEKS + 8)).strftime("%Y-%m-%d")
@@ -417,6 +424,7 @@ def main():
         "total_scanned": total,
         "count": len(results),
         "unverified": unverified,
+        "sector_totals": dict(sector_totals),
         "stocks": results,
     }
     DOCS.mkdir(exist_ok=True)
