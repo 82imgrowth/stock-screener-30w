@@ -91,6 +91,7 @@ DOCS = Path(__file__).parent / "docs"
 OUT_PATH = DOCS / "data.json"
 CHART_DIR = DOCS / "charts"
 REPORT_PATH = DOCS / "reports.json"
+THEME_PATH = DOCS / "themes.json"
 
 # 네이버 종목분석 리포트. 정적 사이트라 브라우저에서 네이버를 직접 부르면 CORS로
 # 막히므로 스크리닝 때 미리 받아 JSON으로 굽는다. 목록에 목표주가·투자의견은 없고
@@ -99,6 +100,13 @@ REPORT_LIST_URL = "https://finance.naver.com/research/company_list.naver?page={}
 REPORT_PAGES = 400      # 30건/페이지 → 약 12,000건, 최근 14개월치
 # 종목당 개수는 제한하지 않는다(수집 기간이 상한 역할). 전 종목 합쳐 약 4,200건,
 # 파일 841KB지만 gzip 전송 시 약 150KB라 지연 로딩으로 감당된다.
+
+# 네이버 금융 테마 분류(266개). 업종(WICS)이 배타적인 산업 구분이라면 테마는
+# 'CXL', '소캠' 같은 재료 단위라 한 종목이 여러 테마에 중복 소속된다(평균 2.8개).
+# 인포스탁 데이터는 증권사 HTS 전용 상용 공급이라 개인이 쓸 공개 API가 없다.
+NAVER_THEME_LIST_URL = "https://finance.naver.com/sise/theme.naver?page={}"
+NAVER_THEME_DETAIL_URL = "https://finance.naver.com/sise/sise_group_detail.naver?type=theme&no={}"
+THEME_PAGES = 7          # 페이지당 40개 → 266개 전부
 
 # 네이버 금융 업종 분류(WICS 기반, 79개). KRX/통계청 표준산업분류(KSIC)는
 # 지주사가 전부 '기타 금융업'으로 뭉개져 투자 관점 분류로 못 쓴다.
@@ -148,6 +156,44 @@ def get_sector_map() -> dict:
                 mapping[c] = name
     print(f"업종 분류: {len(groups) - failed}/{len(groups)}개 업종, {len(mapping)}종목 매핑")
     return mapping
+
+
+def get_themes() -> list:
+    """[{name, total, codes}] — codes는 나중에 통과 종목만 남긴다. 실패 시 빈 리스트."""
+    pairs = []
+    for page in range(1, THEME_PAGES + 1):
+        try:
+            html = _naver_get(NAVER_THEME_LIST_URL.format(page))
+        except Exception:
+            continue
+        pairs += re.findall(
+            r"/sise/sise_group_detail\.naver\?type=theme&no=(\d+)\">([^<]+)</a>", html
+        )
+    pairs = list(dict.fromkeys(pairs))
+    if not pairs:
+        print("[경고] 테마 목록을 받지 못했습니다", file=sys.stderr)
+        return []
+
+    def fetch(item):
+        no, name = item
+        try:
+            codes = re.findall(
+                r"/item/main\.naver\?code=(\d{6})",
+                _naver_get(NAVER_THEME_DETAIL_URL.format(no)),
+            )
+            return name, list(dict.fromkeys(codes))
+        except Exception:
+            return name, None
+
+    out, failed = [], 0
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for name, codes in ex.map(fetch, pairs):
+            if codes is None:
+                failed += 1
+                continue
+            out.append({"name": name, "total": len(codes), "codes": codes})
+    print(f"테마 분류: {len(out)}/{len(pairs)}개 테마 수집 (실패 {failed})")
+    return out
 
 
 def _parse_report_page(page: int):
@@ -438,8 +484,23 @@ def main():
         (CHART_DIR / f"{code}.json").write_text(
             json.dumps(chart, ensure_ascii=False), encoding="utf-8"
         )
+    passed = {r["code"] for r in results}
+
+    # 테마: 통과 종목만 남겨 저장(구성 전체 수는 비율 분모로 유지).
+    # 한 종목이 여러 테마에 중복 소속되므로 합계는 전체 종목 수와 맞지 않는다.
+    themes = [
+        {"name": t["name"], "total": t["total"],
+         "codes": [c for c in t["codes"] if c in passed]}
+        for t in get_themes()
+    ]
+    # 구성종목이 적은 테마도 그대로 둔다(순위 목록이라 표본 수를 같이 보여주면 판단 가능)
+    THEME_PATH.write_text(
+        json.dumps({"updated": out["updated"], "themes": themes}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
     # 통과 종목의 증권사 리포트 (수집 실패해도 스크리닝 결과는 그대로 유지)
-    reports = get_reports({r["code"] for r in results})
+    reports = get_reports(passed)
     REPORT_PATH.write_text(
         json.dumps({"updated": out["updated"], "reports": reports}, ensure_ascii=False),
         encoding="utf-8",
@@ -448,6 +509,7 @@ def main():
     print(f"완료: {len(results)}/{total} 종목이 30주선 위 → {OUT_PATH}")
     print(f"차트 파일 {len(charts)}개 생성 → {CHART_DIR}")
     print(f"리포트 파일 → {REPORT_PATH} ({REPORT_PATH.stat().st_size // 1024}KB)")
+    print(f"테마 파일 → {THEME_PATH} ({len(themes)}개 테마)")
     if unverified:
         print(f"[주의] 검증 불가 {len(unverified)}종목 (데이터 오류로 판정 제외):")
         for u in unverified:
