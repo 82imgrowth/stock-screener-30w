@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>섹터 히트맵 · 30주선 위 종목</title>
+<title>테마 · 30주선 위 종목</title>
 <style>
   :root {
     --bg: #f7f8fa; --card: #fff; --text: #1a1d24; --muted: #6b7280;
@@ -30,6 +30,11 @@
   .topnav a.active { color: var(--accent); border-bottom-color: var(--accent); }
   h1 { font-size: 1.4rem; margin-bottom: 4px; }
   .meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 14px; }
+  .controls { display: flex; gap: 8px; margin-bottom: 14px; }
+  .controls input[type="search"] {
+    flex: 1; min-width: 200px; padding: 10px 14px; font-size: 0.95rem;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text);
+  }
 
   .crumb { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; min-height: 34px; flex-wrap: wrap; }
   .crumb button {
@@ -78,7 +83,48 @@
   #scale-toggle:hover { color: var(--text); }
   #scale-toggle[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
   .empty { padding: 40px; text-align: center; color: var(--muted); }
-  @media (max-width: 640px) { #heatmap { height: 460px; } }
+
+  /* 테마 순위 목록 — 테마는 중복 소속이라 면적 분할보다 줄 단위 비교가 정확하다 */
+  #theme-panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .tl-row {
+    display: grid; grid-template-columns: 34px minmax(0, 1fr) 150px 92px 64px;
+    align-items: center; gap: 10px; padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  #theme-list .tl-row { cursor: pointer; }
+  #theme-list .tl-row:last-child { border-bottom: none; }
+  #theme-list .tl-row:hover { background: var(--hover); }
+  .tl-head {
+    color: var(--muted); font-weight: 600; font-size: 0.78rem;
+    position: sticky; top: 0; background: var(--card); z-index: 1;
+  }
+  .tl-head [data-sort] { cursor: pointer; user-select: none; }
+  .tl-head [data-sort]:hover { color: var(--accent); }
+  .tl-head .tl-bar-head, .tl-head .tl-num, .tl-head .tl-new { text-align: right; }
+  .arrow { font-size: 0.7em; }
+  .tl-rank { color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+  .tl-name { font-weight: 600; font-size: 0.88rem; word-break: keep-all; }
+  .tl-head .tl-name { font-weight: 600; font-size: 0.78rem; }
+  /* 막대는 0~100% 절대 눈금. 25/50/75% 위치에 옅은 눈금선을 깔아 길이를 읽게 한다 */
+  .tl-bar {
+    height: 12px; border-radius: 6px; overflow: hidden; position: relative;
+    background:
+      repeating-linear-gradient(to right, transparent 0 24.6%, var(--border) 24.6% 25%),
+      var(--hover);
+  }
+  .tl-bar i { display: block; height: 100%; border-radius: 6px; background: var(--up); }
+  .tl-num { font-size: 0.8rem; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+  .tl-num b { color: var(--text); font-weight: 700; }
+  .tl-pct { font-size: 0.8rem; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+  .tl-new { font-size: 0.72rem; text-align: right; }
+  .tl-new span {
+    background: #ffd400; color: #1a1d24; padding: 1px 5px; border-radius: 4px; font-weight: 700;
+  }
+  @media (max-width: 640px) {
+    .tl-row { grid-template-columns: 26px minmax(0, 1fr) 74px 68px; gap: 7px; padding: 8px 10px; }
+    .tl-new { display: none; }
+  }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
 
   /* 차트 모달 (30Weeks 페이지와 동일) */
   .modal-backdrop {
@@ -138,13 +184,26 @@
 <div class="wrap">
   <nav class="topnav">
     <a href="index.html">30Weeks</a>
-    <a href="sector.html" class="active">섹터 히트맵</a>
-    <a href="theme.html">테마</a>
+    <a href="sector.html">섹터 히트맵</a>
+    <a href="theme.html" class="active">테마</a>
   </nav>
-  <h1>섹터 히트맵</h1>
+  <h1>테마별 30주선 위 비중</h1>
   <div class="meta" id="meta">데이터 로딩 중...</div>
+  <div class="controls" id="controls">
+    <input type="search" id="search" placeholder="테마명 검색">
+  </div>
   <div class="crumb" id="crumb"></div>
-  <div id="heatmap"></div>
+  <div id="theme-panel">
+    <div class="tl-row tl-head" id="theme-head">
+      <div class="tl-rank">#</div>
+      <div class="tl-name" data-sort="name">테마명 <span class="arrow" id="ar-name"></span></div>
+      <div class="tl-bar-head" data-sort="ratio">비율 <span class="arrow" id="ar-ratio"></span></div>
+      <div class="tl-num" data-sort="count">종목수 <span class="arrow" id="ar-count"></span></div>
+      <div class="tl-new" data-sort="new">NEW <span class="arrow" id="ar-new"></span></div>
+    </div>
+    <div id="theme-list"></div>
+  </div>
+  <div id="heatmap" style="display:none"></div>
   <div class="legend">
     <span id="size-label">타일 크기 = 종목 수</span>
     <button id="scale-toggle" type="button">보정 보기</button>
@@ -181,7 +240,9 @@
 <script>
 let stocks = [], dataVersion = "", currentSector = null;
 let reports = null;   // { 종목코드: [{title, broker, date, pdf, nid}] }
-let sectorTotals = {};  // { 섹터: 그 섹터의 전체 종목 수 } — 30주선 위 비중의 분모
+let themes = [];        // [{name, total, codes}] — codes는 30주선 위 종목만
+let byCode = {};        // 종목코드 → 종목
+let sortBy = "ratio", sortDesc = true;
 // 섹터 화면: 크기 = 종목 수 (어느 섹터에 30주선 위 종목이 몰렸는지 = 섹터 강도)
 // 종목 화면: 크기 = 시가총액. 대형주 쏠림이 심하면 sqrt 보정으로 압축(순서는 유지)
 let sqrtScale = true;
@@ -309,37 +370,73 @@ function renderTiles(items, onClick, subLabel) {
 }
 
 // push=true일 때만 히스토리에 기록한다. 리사이즈·popstate 재렌더는 기록하면 안 된다.
-function showSectors(push = false) {
-  currentSector = null;
-  if (push) history.pushState({ sector: null }, "", location.pathname);
-  const bySector = {};
-  for (const s of stocks) {
-    const b = bySector[s.sector] || (bySector[s.sector] = { cap: 0, wsum: 0, n: 0, nw: 0 });
-    b.cap += s.marcap; b.wsum += s.change_pct * s.marcap; b.n++;
-    if (isNew(s)) b.nw++;
-  }
-  // 크기 = 종목 수. 시총으로 하면 반도체가 78%를 먹어 섹터 강도를 못 읽는다.
-  // 5종목 이하는 최소 블럭으로 눌러 강한 섹터가 도드라지게 하되, 이름은 모두 표시한다.
-  const items = Object.entries(bySector).map(([name, b]) => {
-    const minor = b.n <= MINOR_MAX;
+// 테마별 집계 — 히트맵과 순위 목록이 같은 수치를 쓰도록 한 곳에서 만든다
+function themeStats() {
+  return themes.map(t => {
+    const list = t.codes.map(c => byCode[c]).filter(Boolean);
+    const cap = list.reduce((a, s) => a + s.marcap, 0);
+    const wsum = list.reduce((a, s) => a + s.change_pct * s.marcap, 0);
     return {
-      label: name, value: minor ? minorValue(b.n) : b.n, cap: b.cap,
-      pct: b.cap ? b.wsum / b.cap : 0, count: b.n, newCount: b.nw,
-      total: sectorTotals[name] || 0, key: name,
+      label: t.name, value: list.length, cap,
+      pct: cap ? wsum / cap : 0, count: list.length,
+      newCount: list.filter(isNew).length, total: t.total, key: t.name,
+      ratio: t.total ? list.length / t.total : 0,
     };
   });
-  document.getElementById("crumb").innerHTML =
-    `<span class="cur">전체 섹터</span><span class="cnt">${items.length}개 · `
-    + `${sectorLabel({ count: stocks.length, total: Object.values(sectorTotals).reduce((a, b) => a + b, 0) })}</span>`;
-  setLegend("종목 수", false);
-  document.getElementById("heatmap").classList.add("sector-view");
-  renderTiles(items, t => showSector(t.key, true), sectorLabel);
 }
+
+function showList(push = false) {
+  currentSector = null;
+  if (push) history.pushState({ sector: null }, "", location.pathname);
+  document.getElementById("theme-panel").style.display = "";
+  document.getElementById("controls").style.display = "";
+  document.getElementById("heatmap").style.display = "none";
+  document.querySelector(".legend").style.display = "none";
+
+  const cmp = {
+    name: (a, b) => a.label.localeCompare(b.label, "ko"),
+    ratio: (a, b) => a.ratio - b.ratio || a.count - b.count,
+    count: (a, b) => a.count - b.count,
+    new: (a, b) => a.newCount - b.newCount || a.ratio - b.ratio,
+  }[sortBy];
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  const all = themeStats();
+  // 검색은 정렬·순위와 무관하게 이름만 걸러낸다(순번은 걸러진 목록 기준으로 다시 매긴다)
+  const rows = (q ? all.filter(r => r.label.toLowerCase().includes(q)) : all)
+    .sort((a, b) => (sortDesc ? -cmp(a, b) : cmp(a, b)));
+
+  document.querySelectorAll(".tl-head .arrow").forEach(el => (el.textContent = ""));
+  const ar = document.getElementById("ar-" + sortBy);
+  if (ar) ar.textContent = sortDesc ? "▼" : "▲";
+
+  document.getElementById("crumb").innerHTML =
+    `<span class="cur">테마 순위</span><span class="cnt">` +
+    (q ? `"${esc(q)}" 검색 ${rows.length}개 / 전체 ${all.length}개` : `${rows.length}개`) +
+    ` · 막대 = 30주선 위 비율(0~100%) · 한 종목이 여러 테마에 중복 소속됨</span>`;
+  if (!rows.length) {
+    document.getElementById("theme-list").innerHTML =
+      '<div class="empty">검색 결과가 없습니다.</div>';
+    return;
+  }
+  document.getElementById("theme-list").innerHTML = rows.map((r, i) => `
+    <div class="tl-row" data-theme="${escAttr(r.label)}">
+      <div class="tl-rank">${i + 1}</div>
+      <div class="tl-name">${esc(r.label)}</div>
+      <div class="tl-bar"><i style="width:${(r.ratio * 100).toFixed(1)}%"></i></div>
+      <div class="tl-num"><b>${(r.ratio * 100).toFixed(0)}%</b> ${r.count}/${r.total}</div>
+      <div class="tl-new">${r.newCount ? `<span>NEW ${r.newCount}</span>` : ""}</div>
+    </div>`).join("");
+}
+
+// 히트맵 진입점은 남기되 목록으로 위임 (뒤로가기·리사이즈 경로가 이걸 부른다)
+const showSectors = showList;
 
 function showSector(name, push = false) {
   currentSector = name;
-  if (push) history.pushState({ sector: name }, "", `?sector=${encodeURIComponent(name)}`);
-  const list = stocks.filter(s => s.sector === name);
+  if (push) history.pushState({ sector: name }, "", `?theme=${encodeURIComponent(name)}`);
+  document.getElementById("controls").style.display = "none";
+  const theme = themes.find(t => t.name === name);
+  const list = (theme ? theme.codes.map(c => byCode[c]).filter(Boolean) : []);
   const items = list.map(s => ({
     label: s.name, value: areaOf(s.marcap), cap: s.marcap,
     pct: s.change_pct, code: s.code, isNew: isNew(s),
@@ -347,10 +444,13 @@ function showSector(name, push = false) {
   const newCount = items.filter(i => i.isNew).length;
   const crumb = document.getElementById("crumb");
   crumb.innerHTML = `<button id="back">← 전체</button><span class="cur">${name}</span>` +
-    `<span class="cnt">${sectorLabel({ count: list.length, total: sectorTotals[name] || 0 })}` +
+    `<span class="cnt">${sectorLabel({ count: list.length, total: theme ? theme.total : 0 })}` +
     `${newCount ? ` · 최근 진입 ${newCount}` : ""}</span>`;
-  crumb.querySelector("#back").addEventListener("click", () => showSectors(true));
+  crumb.querySelector("#back").addEventListener("click", () => showList(true));
   setLegend("시가총액", true);
+  document.getElementById("theme-panel").style.display = "none";
+  document.getElementById("heatmap").style.display = "";
+  document.querySelector(".legend").style.display = "";
   document.getElementById("heatmap").classList.remove("sector-view");
   renderTiles(items, t => openChart(stocks.find(s => s.code === t.code)),
               t => `${t.pct >= 0 ? "+" : ""}${t.pct.toFixed(2)}%`);
@@ -370,6 +470,7 @@ function themeColors() {
   };
 }
 
+const escAttr = t => String(t).replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 const esc = t => String(t).replace(/[&<>"]/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m]));
 
 // 증권사 리포트 목록. PDF가 있으면 원문으로, 없으면 네이버 상세 페이지로 연결.
@@ -483,6 +584,21 @@ document.getElementById("m-close").addEventListener("click", closeChart);
 modal.addEventListener("click", e => { if (e.target === modal) closeChart(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeChart(); });
 
+document.getElementById("search").addEventListener("input", () => {
+  if (!currentSector) showList();
+});
+document.getElementById("theme-head").addEventListener("click", e => {
+  const key = e.target.closest("[data-sort]")?.dataset.sort;
+  if (!key) return;
+  if (sortBy === key) sortDesc = !sortDesc;
+  else { sortBy = key; sortDesc = key !== "name"; }   // 이름만 기본 오름차순
+  showList(false);
+});
+document.getElementById("theme-list").addEventListener("click", e => {
+  const row = e.target.closest(".tl-row");
+  if (row) showSector(row.dataset.theme, true);
+});
+
 const scaleBtn = document.getElementById("scale-toggle");
 scaleBtn.setAttribute("aria-pressed", "true");
 scaleBtn.addEventListener("click", () => {
@@ -497,7 +613,7 @@ addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     if (!stocks.length) return;
-    currentSector ? showSector(currentSector) : showSectors();
+    currentSector ? showSector(currentSector) : showList();
     if (chart) {
       const box = document.getElementById("chart-box");
       chart.resize(box.clientWidth, box.clientHeight);
@@ -516,31 +632,35 @@ fetch("reports.json", { cache: "no-cache" })
   })
   .catch(() => { reports = {}; });
 
-// 브라우저 뒤로가기: 종목 화면 → 섹터 히트맵으로 돌아온다(페이지를 벗어나지 않음)
+// 브라우저 뒤로가기: 종목 화면 → 테마 히트맵으로 돌아온다(페이지를 벗어나지 않음)
 addEventListener("popstate", e => {
-  if (!stocks.length) return;
+  if (!themes.length) return;
   closeChart();
-  const name = e.state ? e.state.sector : new URLSearchParams(location.search).get("sector");
-  name && stocks.some(s => s.sector === name) ? showSector(name) : showSectors();
+  const name = e.state ? e.state.sector : new URLSearchParams(location.search).get("theme");
+  name && themes.some(t => t.name === name) ? showSector(name) : showList();
 });
 
-fetch("data.json", { cache: "no-cache" })
-  .then(r => r.json())
-  .then(d => {
+// data.json(종목) + themes.json(테마 구성)을 함께 받아야 화면을 그릴 수 있다
+Promise.all([
+  fetch("data.json", { cache: "no-cache" }).then(r => r.json()),
+  fetch("themes.json", { cache: "no-cache" }).then(r => (r.ok ? r.json() : null)),
+])
+  .then(([d, th]) => {
     dataVersion = d.updated;
-    // ETF는 개별 기업이 아니라 섹터 강도 판단을 흐려서 제외 (30Weeks 페이지에는 그대로 있음)
-    stocks = d.stocks.filter(s => s.sector && s.market !== "ETF");
-    sectorTotals = d.sector_totals || {};
+    stocks = d.stocks.filter(s => s.market !== "ETF");
+    stocks.forEach(s => { byCode[s.code] = s; });
+    themes = (th && th.themes) || [];
+    const covered = new Set(themes.flatMap(t => t.codes));
     document.getElementById("meta").textContent =
-      `기준: ${d.updated} · 30주선 위 ${fmt(stocks.length)}종목(ETF 제외)을 섹터별로 분류 · 타일이 클수록 해당 섹터에 30주선 위 종목이 많다는 뜻`;
-    if (!stocks.length) {
+      `기준: ${d.updated} · 30주선 위 ${fmt(covered.size)}종목이 ${themes.length}개 테마에 분포`;
+    if (!themes.length) {
       document.getElementById("heatmap").innerHTML =
-        '<div class="empty">섹터 정보가 없습니다. 스크리닝을 다시 실행하세요.</div>';
+        '<div class="empty">테마 정보가 없습니다. 스크리닝을 다시 실행하세요.</div>';
       return;
     }
-    // ?sector=... 로 들어오면 그 섹터를 바로 열어 새로고침·공유에도 화면이 유지된다.
-    const initial = new URLSearchParams(location.search).get("sector");
-    const valid = initial && stocks.some(s => s.sector === initial);
+    // ?theme=... 로 들어오면 그 테마를 바로 열어 새로고침·공유에도 화면이 유지된다.
+    const initial = new URLSearchParams(location.search).get("theme");
+    const valid = initial && themes.some(t => t.name === initial);
     history.replaceState({ sector: valid ? initial : null }, "", location.href);
     valid ? showSector(initial) : showSectors();
   })
