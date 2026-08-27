@@ -2,9 +2,14 @@ name: Daily stock screening
 
 on:
   schedule:
-    # 평일 16:00 KST(07:00 UTC) 목표. 장 마감은 15:30 KST라 종가가 확정된 뒤다.
+    # 평일 16:07 KST(07:07 UTC) 목표. 장 마감은 15:30 KST라 종가가 확정된 뒤다.
+    # 정각을 피하는 이유: 전 세계 cron이 :00에 몰려 지연·누락 확률이 가장 높다.
     # GitHub Actions cron은 보통 25~60분 지연되므로 실제로는 16:30~17:10경 완료된다.
-    - cron: "0 7 * * 1-5"
+    - cron: "7 7 * * 1-5"
+    # 백업. schedule 이벤트는 GitHub 부하가 몰리면 아예 누락될 수 있다(문서에 명시).
+    # 2026-08-27이 실제로 그렇게 통째로 빠졌다. 20:00 KST에 한 번 더 돌려
+    # 그날 데이터가 없으면 메운다. 정상적인 날엔 아래 확인 단계에서 바로 끝난다.
+    - cron: "0 11 * * 1-5"
   workflow_dispatch:
 
 permissions:
@@ -13,19 +18,41 @@ permissions:
 jobs:
   screen:
     runs-on: ubuntu-latest
+    # 스크리닝은 9분쯤 걸린다. 행이 걸린 실행이 기본값 6시간을 태우지 않게 한다.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
+      # 이미 오늘 데이터가 있으면 건너뛴다(백업 실행이 정상적인 날 중복으로 도는 걸 막음).
+      # 수동 실행(workflow_dispatch)은 다시 돌리려는 의도이므로 항상 진행한다.
+      - id: fresh
+        name: Check whether today's data already exists
+        run: |
+          today=$(TZ=Asia/Seoul date +%F)
+          # encoding을 명시한다. 종목명이 한글이라 로캘이 UTF-8이 아니면 읽다 죽는다.
+          updated=$(python3 -c "import json,io;print(json.load(io.open('docs/data.json',encoding='utf-8'))['updated'][:10])" 2>/dev/null || echo "")
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$updated" = "$today" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$today 데이터가 이미 있어 건너뜁니다 (updated=$updated)"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "스크리닝을 진행합니다 (today=$today, updated=${updated:-없음})"
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.fresh.outputs.skip != 'true'
         with:
           python-version: "3.12"
           cache: pip
 
       - run: pip install -r requirements.txt
+        if: steps.fresh.outputs.skip != 'true'
 
       - run: python screen_stocks.py
+        if: steps.fresh.outputs.skip != 'true'
 
       - name: Commit updated data
+        if: steps.fresh.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
