@@ -23,6 +23,12 @@ WORKERS = 8
 # 한국 시장 가격제한폭(±30%)을 넘는 일간 변동은 감자/액면분할/거래정지 해제 등
 # 기업 이벤트 → KRX 원주가 기반 이동평균이 왜곡되므로 수정주가로 재검증 필요
 CORP_ACTION_THRESHOLD = 0.31
+
+# 시가총액 하한. 이보다 작은 종목은 아예 스캔하지 않아 종목 목록·차트·섹터 분모·
+# 테마 구성·30주선 미달 목록에 일괄로 안 나온다("최초 조건에서 제외").
+# ETF는 개별 기업이 아니라 펀드라 시총(순자산)의 의미가 다르고, 섹터·테마 화면에는
+# 애초에 안 나온다. 600억을 적용하면 섹터·테마 ETF가 87개 중 51개나 사라져 제외한다.
+MIN_MARCAP = 600 * 10**8      # 600억
 # 30주선 추세 분석에 부적합하거나 사용자가 제외 요청한 ETF 유형:
 #   - 인버스: 30주선 위 = 기초지수 하락 추세라 신호 해석이 반대
 #   - 채권/머니마켓/금리형: 가격이 사실상 단조 우상향이라 상시 30주선 위
@@ -290,6 +296,10 @@ def get_listings() -> pd.DataFrame:
     merged = merged[merged["Close"] > 0]
     # 스팩(기업인수목적회사)은 합병 대상 탐색용 페이퍼컴퍼니라 추세 분석 대상이 아님
     merged = merged[~merged["Name"].str.contains("스팩", na=False)]
+    # 시가총액 하한(개별주만). 여기서 걸러야 차트·섹터 분모·테마·미달 목록까지 일괄 적용된다.
+    small = (merged["Market"] != "ETF") & (merged["Marcap"].fillna(0) < MIN_MARCAP)
+    print(f"시총 {MIN_MARCAP // 10**8}억 미만 개별주 {int(small.sum())}종목 제외")
+    merged = merged[~small]
     return merged
 
 
@@ -548,7 +558,11 @@ def main():
         # 스팩은 아예 스캔하지 않으므로 '0/41 (0%)'가 사실과 다른 값이 된다.
         if not hit and not miss:
             continue
-        themes.append({"name": t["name"], "total": t["total"],
+        # 분모는 네이버가 세어둔 구성종목 수가 아니라 '우리가 실제로 판정한 수'다.
+        # 시총 하한·스팩·상장 30주 미만으로 빠진 종목까지 분모에 넣으면 비율이
+        # 실제보다 낮게 나온다(화장품 33% vs 실제 53%). 순위 페이지라 왜곡이 그대로
+        # 순서에 반영돼 그냥 둘 수 없다.
+        themes.append({"name": t["name"], "total": len(hit) + len(miss),
                        "codes": hit, "below": miss})
         used.update(miss)
     THEME_PATH.write_text(
