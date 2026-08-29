@@ -357,6 +357,22 @@ def compact_chart(tail: pd.DataFrame, ma30: pd.Series) -> dict:
     }
 
 
+def get_trading_days(days: int = 40) -> list:
+    """최근 개장일 목록(YYYY-MM-DD). 실패하면 빈 리스트.
+
+    웹에서 NEW 배지를 '달력일'이 아니라 '영업일'로 세려면 실제 개장일이 필요하다.
+    주말만 빼면 추석·설 같은 휴장일에 하루씩 어긋난다. 코스피 지수 일봉의
+    인덱스가 곧 개장일이라 요청 한 번으로 정확한 달력을 얻는다.
+    """
+    start = (datetime.today() - timedelta(days=days * 2 + 30)).strftime("%Y-%m-%d")
+    try:
+        idx = fdr.DataReader("KS11", start).index
+    except Exception as e:
+        print(f"[경고] 개장일 목록을 받지 못했습니다: {e!r}", file=sys.stderr)
+        return []
+    return [d.strftime("%Y-%m-%d") for d in idx][-days:]
+
+
 def weekly_from_daily(daily: pd.DataFrame) -> pd.DataFrame:
     return daily.resample("W-FRI").agg(
         {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
@@ -504,6 +520,7 @@ def main():
         "count": len(results),
         "unverified": unverified,
         "sector_totals": dict(sector_totals),
+        "trading_days": get_trading_days(),
         "stocks": results,
     }
     DOCS.mkdir(exist_ok=True)

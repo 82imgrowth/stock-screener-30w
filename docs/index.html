@@ -211,9 +211,7 @@
     <select id="new-filter">
       <option value="">전체 종목</option>
       <option value="all">NEW_ALL</option>
-      <option value="1">NEW_1DAY</option>
-      <option value="2">NEW_2DAY</option>
-      <option value="3">NEW_3DAY</option>
+      <!-- NEW_1DAY ~ NEW_5DAY 는 NEW_DAYS 값에 맞춰 스크립트가 채운다 -->
     </select>
   </div>
   <div class="table-box">
@@ -273,15 +271,49 @@ const fmtMarcap = n => {
 };
 
 // 30주선 진입 후 며칠째인지로 NEW를 세 단계로 나눈다.
-// 진입 당일 = NEW_1DAY, 다음날 = NEW_2DAY, 그다음날 = NEW_3DAY, 그 이후는 NEW 아님.
-// 한 종목은 셋 중 하나에만 속한다(겹치지 않음). NEW_ALL이 셋을 합쳐 보여준다.
+// 진입 당일 = NEW_1DAY, 한 영업일 뒤 = NEW_2DAY, 두 영업일 뒤 = NEW_3DAY.
+// 한 종목은 셋 중 하나에만 속한다(겹치지 않음). NEW_ALL이 전부를 합쳐 보여준다.
+//
+// 달력일이 아니라 '영업일'로 센다. 금요일에 진입한 종목은 월요일에 4일차가 아니라
+// 2일차다. 주말만 빼면 추석·설·대체공휴일에 하루씩 어긋나므로, 스크리너가 실어 보낸
+// 실제 개장일 목록(코스피 지수 일봉 기준)을 쓴다. 그 목록이 없으면 주말만 제외해
+// 근사한다(옛 data.json 호환).
 const NEW_DAYS = 3;
-let newFilter = "";       // "" 전체 | "all" 셋 다 | "1" | "2" | "3"
+let newFilter = "";       // "" 전체 | "all" 전부 | "1"~"3"
+let tradingDays = [];     // ["2026-08-27", "2026-08-28", ...] 오름차순
+
+function kstToday() {
+  const now = new Date();
+  const k = new Date(now.getTime() + (now.getTimezoneOffset() + 540) * 60000);
+  const p = n => String(n).padStart(2, "0");
+  return `${k.getFullYear()}-${p(k.getMonth() + 1)}-${p(k.getDate())}`;
+}
+
+// since부터 오늘까지의 영업일 수(since 당일 포함). 오늘이 휴장일이면 그 이전
+// 개장일까지만 센다 — 토요일에 보는 금요일 진입 종목은 여전히 1일차다.
+function tradingAge(since) {
+  const today = kstToday();
+  if (since > today) return 0;
+  if (tradingDays.length) {
+    const n = tradingDays.filter(d => d >= since && d <= today).length;
+    // since가 목록보다 오래됐으면(40일치만 싣는다) NEW 대상이 아니다
+    return n || (since < tradingDays[0] ? 0 : 1);
+  }
+  // 폴백: 주말만 제외. 30일을 넘어가면 어차피 NEW 대상이 아니라 조기 종료.
+  const d = new Date(since + "T00:00:00"), end = new Date(today + "T00:00:00");
+  let n = 0, guard = 0;
+  while (d <= end && guard++ < 40) {
+    const w = d.getDay();
+    if (w !== 0 && w !== 6) n++;
+    d.setDate(d.getDate() + 1);
+  }
+  return guard >= 40 ? 0 : n;
+}
+
 function newAge(s) {
   if (!s.since) return 0;
-  const days = (Date.now() - new Date(s.since + "T00:00:00").getTime()) / 86400000;
-  if (days < 0 || days >= NEW_DAYS) return 0;
-  return Math.floor(days) + 1;   // 0일차 → 1, 1일차 → 2, 2일차 → 3
+  const n = tradingAge(s.since);
+  return n >= 1 && n <= NEW_DAYS ? n : 0;
 }
 const isNew = s => newAge(s) > 0;
 function matchesNew(s) {
@@ -339,7 +371,13 @@ document.querySelectorAll("thead th").forEach(th => {
 });
 document.getElementById("search").addEventListener("input", render);
 document.getElementById("market-filter").addEventListener("change", render);
-document.getElementById("new-filter").addEventListener("change", e => {
+// 구간 수를 NEW_DAYS 한 곳에서만 바꾸면 되도록 항목을 여기서 만든다
+const newFilterSel = document.getElementById("new-filter");
+for (let n = 1; n <= NEW_DAYS; n++) {
+  newFilterSel.insertAdjacentHTML("beforeend",
+    `<option value="${n}">NEW_${n}DAY</option>`);
+}
+newFilterSel.addEventListener("change", e => {
   newFilter = e.currentTarget.value;
   render();
 });
@@ -538,6 +576,7 @@ fetch("data.json", { cache: "no-cache" })
   .then(d => {
     stocks = d.stocks;
     dataVersion = d.updated;
+    tradingDays = d.trading_days || [];
     // 기본 화면이 개별 종목만 보여주므로 요약도 주식/ETF를 나눠 적는다
     const eq = stocks.filter(s => s.market !== "ETF");
     const etfCount = d.count - eq.length;
@@ -545,11 +584,7 @@ fetch("data.json", { cache: "no-cache" })
     let metaText =
       `기준: ${d.updated} · 전체 ${fmt(d.total_scanned)}종목 중 ${fmt(d.count)}종목 (${(d.count / d.total_scanned * 100).toFixed(1)}%)이 30주선 위` +
       ` · 코스피+코스닥 ${fmt(eq.length)}종목` + (etfCount ? ` · ETF ${fmt(etfCount)}종목` : "");
-    if (newCount) {
-      const by = n => eq.filter(s => newAge(s) === n).length;
-      metaText += ` · 최근 진입 ${fmt(newCount)}종목` +
-        ` (NEW_1DAY ${by(1)} · NEW_2DAY ${by(2)} · NEW_3DAY ${by(3)})`;
-    }
+    if (newCount) metaText += ` · 최근 진입 ${fmt(newCount)}종목`;
     const meta = document.getElementById("meta");
     if (d.unverified && d.unverified.length) {
       metaText += ` · ⚠ 데이터 오류로 판정 못한 종목 ${d.unverified.length}개`;
