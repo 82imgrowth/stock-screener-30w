@@ -250,7 +250,7 @@
     <div class="modal-body">
       <div class="chart-pane">
         <div id="chart-box"></div>
-        <div class="chart-hint">주봉 · 주황선 = 30주 이동평균 · 하단 막대 = 거래량 · 휠/핀치로 줌, 드래그로 기간 이동</div>
+        <div class="chart-hint">주봉 · 주황선 = 30주 이동평균 · 하단 막대 = 거래량 · 왼쪽 회색 = 매물대(보이는 구간 기준) · 휠/핀치로 줌, 드래그로 기간 이동</div>
       </div>
       <aside class="report-pane">
         <h3>증권사 리포트 <span id="rp-count"></span></h3>
@@ -540,6 +540,105 @@ function expandChart(d) {
   return { candles, ma30 };
 }
 
+// ── 매물대(Volume Profile) ──────────────────────────────────────────────
+// Lightweight Charts v4에는 매물대 시리즈가 없다. 차트 위에 캔버스를 덧대고
+// series.priceToCoordinate()로 가격→화면좌표를 받아 직접 그린다.
+//
+// 화면에 보이는 구간만 다시 계산한다. 그래서 서버에서 미리 구운 고정 버킷을 쓸 수
+// 없고 브라우저가 매번 센다. 재료는 이미 로드된 주봉이다. 일봉을 쓰면 더 정확하지만
+// (일봉 대비 상관 0.958, 최대 매물대 오차 평균 2.1%) 차트 파일이 8.7KB에서 18KB로
+// 늘어 전체 12MB가 33MB가 된다. 그 값을 치를 만큼의 차이가 아니라 주봉으로 센다.
+//
+// 봉 안에서 거래량이 어느 가격에 몰렸는지는 알 수 없어 [저가, 고가]에 균등 배분한다.
+// HTS의 체결가별 매물대와는 다른 근사치다.
+const VP_BUCKETS = 48;
+const VP_WIDTH = 0.82;      // 최대 매물대 길이 = 그림 영역 폭의 82%
+let vpCanvas = null, vpSeries = null, vpBars = null, vpPending = false;
+
+function vpProfile(bars) {
+  let lo = Infinity, hi = -Infinity;
+  for (const b of bars) { if (b.low < lo) lo = b.low; if (b.high > hi) hi = b.high; }
+  if (!isFinite(lo) || hi <= lo) return null;
+  const step = (hi - lo) / VP_BUCKETS;
+  const bins = new Array(VP_BUCKETS).fill(0);
+  for (const b of bars) {
+    const a = Math.max(0, Math.min(VP_BUCKETS - 1, Math.floor((b.low - lo) / step)));
+    const z = Math.max(0, Math.min(VP_BUCKETS - 1, Math.floor((b.high - lo) / step)));
+    const share = (b.volume || 0) / (z - a + 1);
+    for (let i = a; i <= z; i++) bins[i] += share;
+  }
+  const max = Math.max(...bins);
+  return max > 0 ? { lo, step, bins, max } : null;
+}
+
+function vpDraw() {
+  vpPending = false;
+  if (!chart || !vpCanvas || !vpSeries || !vpBars) return;
+  const box = document.getElementById("chart-box");
+  const w = box.clientWidth, h = box.clientHeight, dpr = window.devicePixelRatio || 1;
+  if (vpCanvas.width !== Math.round(w * dpr) || vpCanvas.height !== Math.round(h * dpr)) {
+    vpCanvas.width = Math.round(w * dpr); vpCanvas.height = Math.round(h * dpr);
+    vpCanvas.style.width = w + "px"; vpCanvas.style.height = h + "px";
+  }
+  const g = vpCanvas.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+
+  // 화면에 보이는 봉만 골라 센다
+  const r = chart.timeScale().getVisibleLogicalRange();
+  if (!r) return;
+  const a = Math.max(0, Math.ceil(r.from)), z = Math.min(vpBars.length - 1, Math.floor(r.to));
+  if (z < a) return;
+  const p = vpProfile(vpBars.slice(a, z + 1));
+  if (!p) return;
+
+  const plotW = chart.timeScale().width();
+  const maxBar = plotW * VP_WIDTH;
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  g.fillStyle = dark ? "rgba(148,163,184,0.30)" : "rgba(100,116,139,0.22)";
+  for (let i = 0; i < p.bins.length; i++) {
+    const yTop = vpSeries.priceToCoordinate(p.lo + (i + 1) * p.step);
+    const yBot = vpSeries.priceToCoordinate(p.lo + i * p.step);
+    if (yTop == null || yBot == null) continue;
+    const bh = yBot - yTop;
+    if (bh <= 0) continue;
+    const bw = (p.bins[i] / p.max) * maxBar;
+    if (bw < 0.5) continue;
+    g.fillRect(0, yTop, bw, Math.max(1, bh - 1));   // 왼쪽 끝에서 오른쪽으로
+  }
+}
+
+// 확대·이동 중에는 프레임당 한 번만 다시 그린다. 백그라운드 탭에서는 rAF가 아예
+// 안 돌아 매물대가 갱신되지 않으므로 타이머로 한 번 더 받쳐둔다(rAF가 돌면 무시된다).
+const vpSchedule = () => {
+  if (vpPending) return;
+  vpPending = true;
+  requestAnimationFrame(vpDraw);
+  setTimeout(() => { if (vpPending) vpDraw(); }, 100);
+};
+
+function vpAttach(series, bars) {
+  const box = document.getElementById("chart-box");
+  vpSeries = series; vpBars = bars;
+  vpCanvas = document.createElement("canvas");
+  // 캔들 아래로 깔면 가려져서 위에 올리되, 반투명이라 캔들이 비쳐 보인다
+  vpCanvas.style.cssText = "position:absolute;left:0;top:0;z-index:2;pointer-events:none";
+  box.style.position = "relative";
+  box.appendChild(vpCanvas);
+  chart.timeScale().subscribeVisibleLogicalRangeChange(vpSchedule);
+  // 붙인 직후에는 차트 레이아웃이 아직 안 잡혀 getVisibleLogicalRange()가 null이라
+  // 첫 프레임이 그냥 반환된다. 초기 구간 설정이 구독을 깨우지만, 그마저 놓치는
+  // 경우를 대비해 한 번 더 예약한다.
+  // 첫 렌더는 rAF를 거치지 않고 직접 부른다. 탭이 백그라운드면 rAF가 아예 안 돌아
+  // 매물대가 영영 안 그려진다(실제로 그 상태를 재현해 확인했다).
+  setTimeout(vpDraw, 60);   // 첫 렌더는 rAF를 안 거친다(백그라운드 탭 대비)
+}
+
+function vpDetach() {
+  if (vpCanvas && vpCanvas.parentNode) vpCanvas.parentNode.removeChild(vpCanvas);
+  vpCanvas = null; vpSeries = null; vpBars = null;
+}
+
 function themeColors() {
   const css = getComputedStyle(document.documentElement);
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
@@ -631,7 +730,7 @@ function openChart(s) {
         timeScale: { borderVisible: false },
         localization: { locale: "ko-KR", priceFormatter: p => p.toLocaleString("ko-KR") },
       });
-      chart.addCandlestickSeries({
+      const candleSeries = chart.addCandlestickSeries({
         upColor: "#e5484d", wickUpColor: "#e5484d", borderUpColor: "#e5484d",
         downColor: "#3b82f6", wickDownColor: "#3b82f6", borderDownColor: "#3b82f6",
         // 거래량 자리를 비우느라 축이 0 아래까지 내려가는 것을 막는다
@@ -640,7 +739,8 @@ function openChart(s) {
           if (r && r.priceRange) r.priceRange.minValue = Math.max(0, r.priceRange.minValue);
           return r;
         },
-      }).setData(d.candles);
+      });
+      candleSeries.setData(d.candles);
       chart.addHistogramSeries({
         priceFormat: { type: "volume" }, priceScaleId: "vol",
         lastValueVisible: false, priceLineVisible: false,
@@ -655,6 +755,7 @@ function openChart(s) {
         priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
       }).setData(d.ma30);
       const from = d.candles[Math.max(0, d.candles.length - 52)].time;
+      vpAttach(candleSeries, d.candles);   // 구독을 먼저 걸어야 아래 구간 설정을 잡는다
       chart.timeScale().setVisibleRange({ from, to: d.candles[d.candles.length - 1].time });
     })
     .catch(() => { box.innerHTML = '<div class="empty">차트 데이터를 불러오지 못했습니다</div>'; });
@@ -662,6 +763,7 @@ function openChart(s) {
 
 function closeChart() {
   modal.classList.remove("open");
+  vpDetach();
   if (chart) { chart.remove(); chart = null; }
 }
 document.getElementById("m-close").addEventListener("click", closeChart);
