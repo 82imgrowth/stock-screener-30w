@@ -551,7 +551,7 @@ function expandChart(d) {
 //
 // 봉 안에서 거래량이 어느 가격에 몰렸는지는 알 수 없어 [저가, 고가]에 균등 배분한다.
 // HTS의 체결가별 매물대와는 다른 근사치다.
-const VP_BUCKETS = 48;
+const VP_BUCKETS = 24;
 const VP_WIDTH = 0.82;      // 최대 매물대 길이 = 그림 영역 폭의 82%
 let vpCanvas = null, vpSeries = null, vpBars = null, vpPending = false;
 
