@@ -30,6 +30,18 @@
   }
   .topnav a:hover { color: var(--text); }
   .topnav a.active { color: var(--accent); border-bottom-color: var(--accent); }
+  /* 데이터 업데이트 버튼. 정적 사이트라 서버가 없어, 버튼 한 번으로 스크리닝을
+     돌리려면 GitHub API를 직접 부르고 토큰이 필요하다. 토큰을 이 파일에 적으면
+     공개 저장소라 누구나 소스에서 꺼내 간다. 그래서 처음 한 번만 입력받아 그 사람
+     브라우저에만 둔다(localStorage). 소스에도 서버에도 토큰은 없다.
+     옆 글자와 크기·굵기·색을 그대로 물려받고(font/color: inherit) 밑줄로만 눌림을 알린다. */
+  .meta .run-btn {
+    margin-left: 8px; padding: 0; border: none; background: none;
+    font: inherit; color: inherit; cursor: pointer; white-space: nowrap;
+    text-decoration: underline; text-underline-offset: 3px;
+  }
+  .meta .run-btn:hover { color: var(--text); }
+  .meta .run-btn[disabled] { cursor: default; text-decoration: none; opacity: 0.75; }
   h1 { font-size: 1.4rem; margin-bottom: 4px; }
   .meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 16px; }
   .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -199,7 +211,7 @@
     <a href="theme.html">테마</a>
   </nav>
   <h1>30주 이동평균선 위 종목</h1>
-  <div class="meta" id="meta">데이터 로딩 중...</div>
+  <div class="meta" id="meta"><span id="meta-text">데이터 로딩 중...</span><button type="button" class="run-btn" id="run-btn" title="누르면 스크리닝이 시작되고 약 10분 뒤 이 사이트에 반영됩니다. 처음 한 번만 GitHub 토큰을 입력합니다(이 브라우저에만 저장).">↻ 업데이트</button></div>
   <div class="controls">
     <input type="search" id="search" placeholder="종목명 또는 코드 검색">
     <select id="market-filter">
@@ -504,6 +516,114 @@ function vpDetach() {
   vpCanvas = null; vpSeries = null; vpBars = null;
 }
 
+// ── 데이터 업데이트 버튼 ──────────────────────────────────────────────────
+// 토큰은 fine-grained로 이 저장소 하나에 Actions: Read and write 만 줘야 한다.
+// 그러면 유출돼도 이 저장소의 워크플로를 돌리는 것 외에는 아무것도 못 한다.
+const RUN_REPO = "82imgrowth/stock-screener-30w";
+const RUN_WF = "daily-screening.yml";
+const RUN_KEY = "gh-dispatch-token";
+const RUN_LABEL = "↻ 업데이트";
+
+const runStore = {
+  get() { try { return localStorage.getItem(RUN_KEY); } catch (e) { return null; } },
+  set(v) { try { localStorage.setItem(RUN_KEY, v); } catch (e) {} },
+  clear() { try { localStorage.removeItem(RUN_KEY); } catch (e) {} },
+};
+
+function askToken() {
+  const t = prompt(
+    "GitHub 토큰을 붙여넣으세요.\n" +
+    "이 브라우저에만 저장되며 사이트 소스에는 남지 않습니다.\n\n" +
+    "발급 (github.com/settings/personal-access-tokens):\n" +
+    "  1. Generate new token\n" +
+    "  2. Repository access → Only select repositories → " + RUN_REPO + "\n" +
+    "  3. Permissions → Actions → Read and write"
+  );
+  if (!t || !t.trim()) return null;
+  const v = t.trim();
+  runStore.set(v);
+  return v;
+}
+
+function runLabel(btn, text, busy) {
+  btn.textContent = text;
+  btn.disabled = !!busy;
+}
+
+async function runUpdate() {
+  const btn = document.getElementById("run-btn");
+  const token = runStore.get() || askToken();
+  if (!token) return;
+
+  runLabel(btn, "요청 중…", true);
+  let res;
+  try {
+    res = await fetch(
+      "https://api.github.com/repos/" + RUN_REPO + "/actions/workflows/" + RUN_WF + "/dispatches",
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+        body: JSON.stringify({ ref: "main" }),
+      }
+    );
+  } catch (e) {
+    runLabel(btn, RUN_LABEL, false);
+    alert("네트워크 오류로 요청하지 못했습니다.\n" + e.message);
+    return;
+  }
+
+  // 404도 사실상 권한 문제다 — 권한 없는 토큰에는 저장소가 없는 것처럼 보인다.
+  if (res.status === 401 || res.status === 403 || res.status === 404) {
+    runStore.clear();
+    runLabel(btn, RUN_LABEL, false);
+    alert(
+      "토큰이 거부됐습니다 (" + res.status + "). 저장된 토큰을 지웠습니다.\n\n" +
+      "확인할 것:\n" +
+      "  · Repository access 에 " + RUN_REPO + " 가 포함됐는지\n" +
+      "  · Permissions → Actions 가 Read and write 인지\n" +
+      "  · 토큰이 만료되지 않았는지"
+    );
+    return;
+  }
+  if (res.status !== 204) {
+    runLabel(btn, RUN_LABEL, false);
+    alert("실행 요청이 실패했습니다 (" + res.status + " " + res.statusText + ")");
+    return;
+  }
+  runWatch(btn);
+}
+
+// 스크리닝 5~9분 + Pages 빌드 2~3분. '실행이 끝났다'가 아니라 '사이트에 반영됐다'를
+// 봐야 하므로, 워크플로 상태가 아니라 data.json의 갱신 시각이 바뀌는지를 지켜본다.
+function runWatch(btn) {
+  const t0 = Date.now();
+  const was = dataVersion;
+  const tick = async () => {
+    if (Date.now() - t0 > 20 * 60000) {
+      runLabel(btn, "확인 필요 · 새로고침", false);
+      return;
+    }
+    runLabel(btn, "실행 중… " + Math.floor((Date.now() - t0) / 60000) + "분", true);
+    try {
+      const r = await fetch("data.json?t=" + Date.now(), { cache: "no-store" });
+      const d = await r.json();
+      if (d.updated && d.updated !== was) {
+        runLabel(btn, "완료 · 새로고침", false);
+        btn.onclick = () => location.reload();
+        return;
+      }
+    } catch (e) {}
+    setTimeout(tick, 20000);
+  };
+  tick();
+}
+
+document.getElementById("run-btn").addEventListener("click", runUpdate);
+
 function themeColors() {
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
   const css = getComputedStyle(document.documentElement);
@@ -688,15 +808,16 @@ fetch("data.json", { cache: "no-cache" })
       ` · 코스피+코스닥 ${fmt(eq.length)}종목` + (etfCount ? ` · ETF ${fmt(etfCount)}종목` : "");
     if (newCount) metaText += ` · 최근 진입 ${fmt(newCount)}종목`;
     const meta = document.getElementById("meta");
+    const metaText_ = document.getElementById("meta-text");
     if (d.unverified && d.unverified.length) {
       metaText += ` · ⚠ 데이터 오류로 판정 못한 종목 ${d.unverified.length}개`;
       meta.title = d.unverified.map(u => `${u.name}(${u.code})`).join(", ");
     }
-    meta.textContent = metaText;
+    metaText_.textContent = metaText;
     render();
   })
   .catch(() => {
-    document.getElementById("meta").textContent = "data.json을 불러오지 못했습니다. 스크리닝을 먼저 실행하세요.";
+    document.getElementById("meta-text").textContent = "data.json을 불러오지 못했습니다. 스크리닝을 먼저 실행하세요.";
     document.getElementById("tbody").innerHTML = '<tr><td colspan="9" class="empty">데이터 없음</td></tr>';
   });
 </script>
