@@ -5,18 +5,10 @@ on:
     # 평일 16:17 KST(07:17 UTC) 목표. 장 마감은 15:30 KST라 종가가 확정된 뒤다.
     # GitHub Actions cron은 보통 25~60분 지연되므로 실제로는 16:45~17:20경 완료된다.
     - cron: "17 7 * * 1-5"
-    # 백업 19:00 KST(10:00 UTC). 앞 슬롯이 안 뜬 날을 같은 날 안에 메운다.
-    - cron: "0 10 * * 1-5"
   workflow_dispatch:
 
 permissions:
   contents: write
-
-# 두 슬롯이 겹쳐 돌면 나중 것의 git push가 원격이 앞서 있어 깨진다.
-# 뒤에 온 실행은 앞 실행이 끝날 때까지 잡 시작 전에 통째로 대기한다.
-concurrency:
-  group: daily-screening
-  cancel-in-progress: false
 
 jobs:
   screen:
