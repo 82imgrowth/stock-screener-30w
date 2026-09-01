@@ -1,9 +1,17 @@
 name: Daily stock screening
 
-# 호출할 때만 돈다.
-#   gh workflow run daily-screening.yml --ref main
-# 또는 GitHub 웹 Actions 탭의 Run workflow 버튼.
 on:
+  schedule:
+  # 평일 16:17 KST(07:17 UTC). 장 마감 15:30 KST 뒤라 종가가 확정돼 있다.
+  #
+  # 주의: 2026-08-27 이후 이 저장소에서 schedule 이벤트가 발화하지 않는다.
+  # 플랫폼이 정상인 날에도 4영업일 연속 미발화였고, 새 워크플로에 30분 주기 크론을
+  # 걸어도 6슬롯 내내 0건이었다. GitHub 쪽이 회복되면 저절로 돌기 시작한다.
+  # 그때까지는 사이트의 '↻ 업데이트' 버튼이나 아래 수동 실행으로 갱신한다.
+  - cron: "17 7 * * 1-5"
+
+  # 손으로 돌릴 때: gh workflow run daily-screening.yml --ref main
+  # 또는 GitHub 웹 Actions 탭의 Run workflow 버튼, 사이트의 '↻ 업데이트' 버튼.
   workflow_dispatch:
 
 permissions:
