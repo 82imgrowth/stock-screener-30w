@@ -626,10 +626,35 @@ function runLabel(btn, text, busy) {
   btn.disabled = !!busy;
 }
 
+// 이미 돌고 있으면 새로 걸지 않는다. GitHub의 concurrency는 줄 세우기(대기) 아니면
+// 앞엣것 취소만 되고 '새 요청 버리기'가 없어서, 여기서 막는다. 다른 탭·다른 기기에서
+// 눌렀거나 새로고침해 버튼 상태가 초기화된 경우까지 걸러진다.
+async function runBusy(token) {
+  try {
+    const r = await fetch(
+      "https://api.github.com/repos/" + RUN_REPO + "/actions/workflows/" + RUN_WF + "/runs?per_page=5",
+      { headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json" } }
+    );
+    if (!r.ok) return false;   // 확인 못 하면 막지 않는다 — 못 돌리는 쪽이 더 나쁘다
+    const j = await r.json();
+    const busy = ["queued", "in_progress", "waiting", "requested", "pending"];
+    return (j.workflow_runs || []).some(x => busy.indexOf(x.status) >= 0);
+  } catch (e) {
+    return false;
+  }
+}
+
 async function runUpdate() {
   const btn = document.getElementById("run-btn");
   const token = runStore.get() || askToken();
   if (!token) return;
+
+  runLabel(btn, "확인 중…", true);
+  if (await runBusy(token)) {
+    alert("이미 실행 중입니다.\n끝날 때까지 기다려 주세요. 진행 상황은 버튼에 표시됩니다.");
+    runWatch(btn);   // 새로 걸지는 않고 진행만 지켜본다
+    return;
+  }
 
   runLabel(btn, "요청 중…", true);
   let res;
