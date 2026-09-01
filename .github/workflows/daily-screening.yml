@@ -1,40 +1,29 @@
-# 이 파일은 screen.yml을 새 이름으로 재생성한 것이다(2026-08-31).
-# GitHub Actions 장애 기간(8/27~28)에 크론을 3일 연속 고친 뒤 스케줄 등록이 갇혀,
-# 플랫폼이 정상인 날(8/31, 대조군 지연 +0~24분)에도 우리 슬롯만 발화하지 않았다.
-# 주석 수정으로 재등록을 유도해도(PR #42) 확신이 없어, 파일명을 바꿔 GitHub이
-# 완전히 새 워크플로(새 ID)로 등록부를 백지에서 만들게 한다.
+# GitHub의 예약(schedule) 기능은 걷어냈다(2026-09-01).
+# 이 저장소에 한해 GitHub이 schedule 이벤트를 보내지 않는다. 4영업일 연속 미발화이고,
+# 플랫폼은 정상이었다 — 9/1에 pypa/pip은 07:16 UTC에 발화했는데 우리 07:07 슬롯은
+# 빠졌다. 워크플로 파일도 멀쩡하다(같은 날 수동 실행 5.4분 성공). 주석 수정(PR #42),
+# 파일명 변경으로 등록부 재생성(PR #43)까지 시도했으나 둘 다 통하지 않았다.
+# 고칠 수 있는 영역 밖이라, 동작하지 않는 예약을 남겨 두는 대신 삭제한다.
+#
+# 이제 이 워크플로는 호출로만 돈다:
+#   gh workflow run daily-screening.yml --ref main
+# 외부에서 API로 걸어도 같다(workflow_dispatch). 그 경로는 이번 사태 내내 100% 동작했다.
 name: Daily stock screening
 
 on:
-  schedule:
-    # 평일 16:07 KST(07:07 UTC) 목표. 장 마감은 15:30 KST라 종가가 확정된 뒤다.
-    # 정각을 피하는 이유: 전 세계 cron이 :00에 몰려 지연·누락 확률이 가장 높다.
-    # GitHub Actions cron은 보통 25~60분 지연되므로 실제로는 16:30~17:10경 완료된다.
-    - cron: "7 7 * * 1-5"
-    # 백업 두 개. schedule 이벤트는 GitHub 부하가 몰리면 아예 누락된다(문서에 명시).
-    # 2026-08-27, 08-28 이틀 연속으로 통째로 빠졌다. 같은 시기 무관한 대형 저장소들의
-    # cron도 1~3.5시간씩 밀렸고(예: 매시간 도는 워크플로가 하루 24런 → 8런),
-    # GitHub status에는 아무 인시던트도 안 떴다. 우리 설정 문제가 아니다.
-    #
-    # 슬롯을 벌리는 이유: 드롭은 큐 전체가 아니라 슬롯 단위로 일어난다. 그런데 간격이
-    # 지연 폭보다 좁으면 두 슬롯이 뭉개져 한 번의 실패로 같이 죽는다. 직전 배치는
-    # 16:07/17:47로 100분 간격이라 8/28에 둘 다 빠졌다. 2시간 이상 벌린다.
-    #
-    # 마지막 슬롯을 11:13 UTC 뒤로 못 미루는 이유: 최대 지연 3.5시간을 더해도
-    # 15:00 UTC(=KST 자정)를 넘지 않아야 아래 가드의 TZ=Asia/Seoul 날짜 비교가 맞는다.
-    - cron: "19 9 * * 1-5"      # 18:19 KST
-    - cron: "13 11 * * 1-5"     # 20:13 KST
-    #
-    # 앞 실행이 크게 밀리면 뒤 슬롯과 겹칠 수 있어 concurrency로 줄을 세운다.
-    # 겹쳐 돌면 나중 것의 git push가 원격이 앞서 있어 깨진다.
   workflow_dispatch:
+    inputs:
+      force:
+        description: "오늘 데이터가 이미 있어도 다시 실행"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
-# 같은 시각에 둘이 겹쳐 돌지 않게 한다. 뒤에 온 실행은 앞 실행이 끝날 때까지
-# 통째로 대기하므로, 그때 체크아웃한 data.json에는 이미 오늘 데이터가 들어 있어
-# 아래 확인 단계에서 바로 끝난다.
+# 자동 트리거를 여러 겹으로 걸면 두 실행이 겹칠 수 있다. 뒤에 온 실행은 앞 실행이
+# 끝날 때까지 통째로 대기하므로, 그때 체크아웃한 data.json에 이미 오늘 데이터가
+# 들어 있어 아래 확인 단계에서 바로 끝난다. 겹쳐 돌면 나중 것의 git push가 깨진다.
 concurrency:
   group: daily-screening
   cancel-in-progress: false
@@ -47,20 +36,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 이미 오늘 데이터가 있으면 건너뛴다(백업 실행이 정상적인 날 중복으로 도는 걸 막음).
-      # 수동 실행(workflow_dispatch)은 다시 돌리려는 의도이므로 항상 진행한다.
+      # 이미 오늘 데이터가 있으면 건너뛴다. 트리거를 이중으로 걸어도(예: 자동 호출 +
+      # 놓친 작업 보완) 9분짜리 스크리닝이 중복으로 돌지 않는다.
+      # 같은 날 다시 돌리고 싶으면 force 입력을 켠다.
       - id: fresh
         name: Check whether today's data already exists
         run: |
           today=$(TZ=Asia/Seoul date +%F)
           # encoding을 명시한다. 종목명이 한글이라 로캘이 UTF-8이 아니면 읽다 죽는다.
           updated=$(python3 -c "import json,io;print(json.load(io.open('docs/data.json',encoding='utf-8'))['updated'][:10])" 2>/dev/null || echo "")
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "$updated" = "$today" ]; then
+          if [ "${{ inputs.force }}" != "true" ] && [ "$updated" = "$today" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "$today 데이터가 이미 있어 건너뜁니다 (updated=$updated)"
+            echo "$today 데이터가 이미 있어 건너뜁니다 (updated=$updated). 다시 돌리려면 force를 켜세요."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "스크리닝을 진행합니다 (today=$today, updated=${updated:-없음})"
+            echo "스크리닝을 진행합니다 (today=$today, updated=${updated:-없음}, force=${{ inputs.force }})"
           fi
 
       - uses: actions/setup-python@v5
