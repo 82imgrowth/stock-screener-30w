@@ -279,6 +279,7 @@ const fmtMarcap = n => {
 // 실제 개장일 목록(코스피 지수 일봉 기준)을 쓴다. 그 목록이 없으면 주말만 제외해
 // 근사한다(옛 data.json 호환).
 const NEW_DAYS = 3;
+const NEW_MAX_WEEKS = 3;   // 이만큼 연속 30주선 위면 신규가 아니다 (newAge 주석 참고)
 let newFilter = "";       // "" 전체 | "all" 전부 | "1"~"3"
 let tradingDays = [];     // ["2026-08-27", "2026-08-28", ...] 오름차순
 
@@ -312,6 +313,13 @@ function tradingAge(since) {
 
 function newAge(s) {
   if (!s.since) return 0;
+  // since는 '직전 결과 파일에 있었나'로만 정해져서, 30주선을 이탈한 적이 없어도
+  // 시총 600억 경계를 오르내리거나 기업 이벤트로 주가가 조정되는 과도기에
+  // 목록에서 한 번 빠지면 재진입으로 오인된다. weeks_above는 그런 사정과 무관하게
+  // 항상 맞으므로 안전장치로 쓴다 — 3주 이상 연속 위면 최소 6영업일 전 주봉
+  // 종가에서 이미 위였다는 뜻이라 3영업일 이내 신규일 수 없다.
+  // (2주는 지난주 금요일 돌파 → 오늘 월요일 1일차가 가능하므로 살려둔다.)
+  if (s.weeks_above >= NEW_MAX_WEEKS) return 0;
   const n = tradingAge(s.since);
   return n >= 1 && n <= NEW_DAYS ? n : 0;
 }

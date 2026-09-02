@@ -513,15 +513,15 @@ def main():
         except (json.JSONDecodeError, KeyError):
             pass
     for s in results:
-        if s["code"] not in prev_since:
-            s["since"] = today  # 직전 결과에 없던 종목 = 오늘 신규 진입
-        else:
-            # 이미 있던 종목: 기록된 날짜 유지. since 도입 전 데이터는 기간(주)으로
-            # 역산해 채워, 최초 배포 때 전 종목이 NEW로 뜨는 것을 방지한다.
-            weeks = max(int(s.get("weeks_above") or 1) - 1, 0)
-            s["since"] = prev_since[s["code"]] or (
-                now - timedelta(weeks=weeks)
-            ).strftime("%Y-%m-%d")
+        # 직전 결과에 없던 종목이라고 오늘 신규 진입인 것은 아니다. 시총이 600억
+        # 경계를 오르내리거나, 기업 이벤트로 과거 주가만 미조정된 과도기에 30주선
+        # 대비가 왜곡되면 목록에서 한 번 빠졌다 돌아온다(코람코더원리츠는 8/28~29
+        # 이틀간 -75%로 계산돼 탈락했다). weeks_above는 그런 사정과 무관하게 항상
+        # 맞으므로, 기록이 없으면 연속 주 수로 역산한다.
+        weeks = max(int(s.get("weeks_above") or 1) - 1, 0)
+        s["since"] = prev_since.get(s["code"]) or (
+            today if not weeks else (now - timedelta(weeks=weeks)).strftime("%Y-%m-%d")
+        )
 
     results.sort(key=lambda x: x["marcap"], reverse=True)
     out = {
