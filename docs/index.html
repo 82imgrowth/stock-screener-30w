@@ -517,6 +517,26 @@ function themeColors() {
 const esc = t => String(t).replace(/[&<>"]/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m]));
 
 // 증권사 리포트 목록. PDF가 있으면 원문으로, 없으면 네이버 상세 페이지로 연결.
+// 리포트는 차트 팝업에서만 쓴다. 2.3MB(전송 441KB)라 페이지 로드 때 미리 받으면
+// 팝업을 한 번도 안 여는 방문자에게는 통째로 낭비다(전체 전송량의 95%였다).
+// 그래서 첫 팝업에서 받는다. 도착 전에는 renderReports가 '불러오는 중'을 띄우고,
+// 도착하면 열려 있는 팝업을 다시 그린다. 실패해도 페이지는 그대로 동작해야 한다.
+let reportsLoading = false;
+function loadReports() {
+  if (reports || reportsLoading) return;   // 팝업을 여러 번 열어도 한 번만 받는다
+  reportsLoading = true;
+  fetch("reports.json", { cache: "no-cache" })
+    .then(r => (r.ok ? r.json() : null))
+    .then(d => {
+      reports = (d && d.reports) || {};
+      if (modal.classList.contains("open")) {
+        const code = document.getElementById("m-code").textContent.split(" ")[0];
+        renderReports(code);
+      }
+    })
+    .catch(() => { reports = {}; });
+}
+
 function renderReports(code) {
   const list = document.getElementById("report-list");
   const cnt = document.getElementById("rp-count");
@@ -574,6 +594,7 @@ function openChart(s) {
   document.getElementById("m-naver").href = `https://finance.naver.com/item/main.naver?code=${s.code}`;
   modal.classList.add("open");
   renderReports(s.code);
+  loadReports();   // 없으면 지금 받는다(첫 팝업에서 한 번)
 
   const box = document.getElementById("chart-box");
   if (chart) { chart.remove(); chart = null; }
@@ -660,17 +681,6 @@ new ResizeObserver(() => {
   }
 }).observe(document.getElementById("chart-box"));
 
-// 리포트는 부가 정보라 실패해도 페이지는 그대로 동작해야 한다
-fetch("reports.json", { cache: "no-cache" })
-  .then(r => (r.ok ? r.json() : null))
-  .then(d => {
-    reports = (d && d.reports) || {};
-    if (modal.classList.contains("open")) {
-      const code = document.getElementById("m-code").textContent.split(" ")[0];
-      renderReports(code);
-    }
-  })
-  .catch(() => { reports = {}; });
 
 let dataVersion = "";
 fetch("data.json", { cache: "no-cache" })
