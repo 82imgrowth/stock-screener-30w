@@ -119,6 +119,12 @@ THEME_PAGES = 7          # 페이지당 40개 → 266개 전부
 # 지주사가 전부 '기타 금융업'으로 뭉개져 투자 관점 분류로 못 쓴다.
 NAVER_GROUP_URL = "https://finance.naver.com/sise/sise_group.naver?type=upjong"
 NAVER_DETAIL_URL = "https://finance.naver.com/sise/sise_group_detail.naver?type=upjong&no={}"
+# FinanceDataReader의 종목목록 대체 경로. FDR은 KRX 회원 로그인이 필요한
+# 제3자 캐시 저장소를 읽는데, 그 계정 비밀번호가 KRX 정책상 90일마다 만료되면
+# 캐시가 며칠씩 끊긴다(2026-06-08, 2026-09-08 발생). 아래 네이버 API는 로그인이
+# 없고 같은 값을 원 단위로 준다 — 상장주식수 역산 기준 KRX와 99.67% 일치.
+NAVER_LISTING_URL = "https://m.stock.naver.com/api/stocks/marketValue/{}?page={}&pageSize=100"
+NAVER_INDEX_URL = "https://m.stock.naver.com/api/index/KOSPI/price?pageSize={}&page=1"
 UA = {"User-Agent": "Mozilla/5.0"}
 PREF_SUFFIX = re.compile(r"(\d?우[BC]?)$")  # 삼성물산우B, SK우 등 우선주 접미사
 
@@ -264,12 +270,48 @@ def resolve_sector(code: str, name: str, market: str, sector_map: dict) -> str:
     return "기타"
 
 
+def naver_listing(market: str) -> pd.DataFrame:
+    """네이버 시가총액 API → FDR StockListing과 같은 스키마.
+
+    ETF/ETN은 stockEndType으로 걸러낸다(ETF는 별도 경로로 따로 받는다).
+    시총은 marketValueRaw가 이미 원 단위라 환산이 필요 없다.
+    """
+    rows, page = [], 1
+    while True:
+        r = requests.get(NAVER_LISTING_URL.format(market, page), headers=UA, timeout=20)
+        r.raise_for_status()
+        d = r.json()
+        if not d["stocks"]:
+            break
+        rows += d["stocks"]
+        if len(rows) >= d["totalCount"] or page > 60:
+            break
+        page += 1
+    return pd.DataFrame([
+        {
+            "Code": x["itemCode"],
+            "Name": x["stockName"],
+            "Market": market,
+            "Close": float(x["closePriceRaw"] or 0),
+            "Marcap": float(x.get("marketValueRaw") or 0),
+            "ChangeRate": float(x.get("fluctuationsRatio") or 0),
+        }
+        for x in rows if x.get("stockEndType") == "stock"
+    ])
+
+
 def get_listings() -> pd.DataFrame:
     frames = []
     for market in ("KOSPI", "KOSDAQ"):
-        df = fdr.StockListing(market)
-        df = df[["Code", "Name", "Market", "Close", "Marcap", "ChagesRatio"]].copy()
-        df = df.rename(columns={"ChagesRatio": "ChangeRate"})  # FDR 원본 오타
+        try:
+            df = fdr.StockListing(market)
+            df = df[["Code", "Name", "Market", "Close", "Marcap", "ChagesRatio"]].copy()
+            df = df.rename(columns={"ChagesRatio": "ChangeRate"})  # FDR 원본 오타
+        except Exception as e:
+            # 상류 KRX 캐시가 끊긴 날. 여기서 죽으면 그날 갱신 자체가 없다.
+            print(f"[경고] FDR {market} 목록 실패({e!r}) → 네이버로 대체", file=sys.stderr)
+            df = naver_listing(market)
+            print(f"네이버 {market} 목록 {len(df)}종목")
         frames.append(df)
 
     # ETF: 컬럼 체계가 달라 표준 스키마로 정규화 (Symbol→Code, Price→Close,
@@ -377,10 +419,24 @@ def get_trading_days(days: int = 40) -> list:
     start = (datetime.today() - timedelta(days=days * 2 + 30)).strftime("%Y-%m-%d")
     try:
         idx = fdr.DataReader("KS11", start).index
+        out = [d.strftime("%Y-%m-%d") for d in idx][-days:]
     except Exception as e:
-        print(f"[경고] 개장일 목록을 받지 못했습니다: {e!r}", file=sys.stderr)
-        return []
-    return [d.strftime("%Y-%m-%d") for d in idx][-days:]
+        print(f"[경고] KS11 개장일 목록 실패: {e!r}", file=sys.stderr)
+        out = []
+    # KS11은 KRX 경유라 상류가 끊긴 날 어제까지만 온다. 오늘이 빠지면 NEW 배지가
+    # 하루씩 밀리므로 로그인이 필요 없는 네이버 지수 시세로 메운다.
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    if not out or out[-1] < today:
+        try:
+            r = requests.get(NAVER_INDEX_URL.format(days), headers=UA, timeout=20)
+            r.raise_for_status()
+            rows = r.json()
+            nv = sorted({x["localTradedAt"][:10] for x in rows})
+            if nv:
+                out = sorted(set(out) | set(nv))[-days:]
+        except Exception as e:
+            print(f"[경고] 네이버 개장일 목록도 실패: {e!r}", file=sys.stderr)
+    return out
 
 
 def weekly_from_daily(daily: pd.DataFrame) -> pd.DataFrame:
