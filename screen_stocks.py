@@ -102,23 +102,29 @@ BELOW_PATH = DOCS / "below.json"
 
 # 네이버 종목분석 리포트. 정적 사이트라 브라우저에서 네이버를 직접 부르면 CORS로
 # 막히므로 스크리닝 때 미리 받아 JSON으로 굽는다. 목록에 목표주가·투자의견은 없고
-# 제목·증권사·작성일·PDF 링크만 있다(그건 리포트별 상세 페이지를 열어야 함).
-REPORT_LIST_URL = "https://finance.naver.com/research/company_list.naver?page={}"
-REPORT_PAGES = 400      # 30건/페이지 → 약 12,000건, 최근 14개월치
+# 제목·증권사·작성일만 있다. PDF 링크는 리포트별 상세에만 있다(get_reports 참고).
+#
+# 2026-09-11 네이버가 finance.naver.com PC 페이지를 stock.naver.com으로 옮기며 전부
+# 302로 돌려보내기 시작해, HTML을 긁던 업종·테마·리포트 수집이 한꺼번에 빈손이 됐다
+# (그날 섹터 1개·테마 0개·리포트 0건). 같은 데이터를 로그인 없는 JSON API로 받는다.
+NAVER_API = "https://m.stock.naver.com/api"
+REPORT_LIST_API = NAVER_API + "/research/company?page={}&pageSize=200"
+REPORT_DETAIL_API = NAVER_API + "/research/company/{}"
+REPORT_PAGES = 60         # 200건/페이지 → 12,000건, 최근 14개월치(예전 30건×400페이지와 같은 양)
+REPORT_DETAIL_MAX = 3000  # 직전 파일이 비었을 때 상세 1만 건을 한꺼번에 부르지 않도록
 # 종목당 개수는 제한하지 않는다(수집 기간이 상한 역할). 전 종목 합쳐 약 4,200건,
 # 파일 841KB지만 gzip 전송 시 약 150KB라 지연 로딩으로 감당된다.
 
 # 네이버 금융 테마 분류(266개). 업종(WICS)이 배타적인 산업 구분이라면 테마는
 # 'CXL', '소캠' 같은 재료 단위라 한 종목이 여러 테마에 중복 소속된다(평균 2.8개).
 # 인포스탁 데이터는 증권사 HTS 전용 상용 공급이라 개인이 쓸 공개 API가 없다.
-NAVER_THEME_LIST_URL = "https://finance.naver.com/sise/theme.naver?page={}"
-NAVER_THEME_DETAIL_URL = "https://finance.naver.com/sise/sise_group_detail.naver?type=theme&no={}"
-THEME_PAGES = 7          # 페이지당 40개 → 266개 전부
+# 목록·구성종목 모두 아래 NAVER_GROUP_*_API를 kind='theme'으로 부른다.
 
 # 네이버 금융 업종 분류(WICS 기반, 79개). KRX/통계청 표준산업분류(KSIC)는
 # 지주사가 전부 '기타 금융업'으로 뭉개져 투자 관점 분류로 못 쓴다.
-NAVER_GROUP_URL = "https://finance.naver.com/sise/sise_group.naver?type=upjong"
-NAVER_DETAIL_URL = "https://finance.naver.com/sise/sise_group_detail.naver?type=upjong&no={}"
+# 업종(kind='industry')·테마(kind='theme') 공용. 상세는 한 번에 100개가 상한이다.
+NAVER_GROUP_LIST_API = NAVER_API + "/stocks/{}?page={}&pageSize=100"
+NAVER_GROUP_DETAIL_API = NAVER_API + "/stocks/{}/{}?page={}&pageSize=100"
 # FinanceDataReader의 종목목록 대체 경로. FDR은 KRX 회원 로그인이 필요한
 # 제3자 캐시 저장소를 읽는데, 그 계정 비밀번호가 KRX 정책상 90일마다 만료되면
 # 캐시가 며칠씩 끊긴다(2026-06-08, 2026-09-08 발생). 아래 네이버 API는 로그인이
@@ -129,33 +135,51 @@ UA = {"User-Agent": "Mozilla/5.0"}
 PREF_SUFFIX = re.compile(r"(\d?우[BC]?)$")  # 삼성물산우B, SK우 등 우선주 접미사
 
 
-def _naver_get(url: str) -> str:
+def _api_json(url: str):
     r = requests.get(url, headers=UA, timeout=20)
     r.raise_for_status()
-    r.encoding = "euc-kr"
-    return r.text
+    return r.json()
+
+
+def _naver_groups(kind: str) -> list:
+    """업종·테마 목록 → [(no, 이름)]. kind는 'industry' 또는 'theme'."""
+    groups, page = [], 1
+    while True:
+        d = _api_json(NAVER_GROUP_LIST_API.format(kind, page))
+        groups += d["groups"]
+        if not d["groups"] or len(groups) >= d["totalCount"]:
+            break
+        page += 1
+    return [(g["no"], g["name"]) for g in groups]
+
+
+def _naver_group_codes(kind: str, no) -> list:
+    """업종·테마 하나의 구성 종목코드. 한 번에 100개까지만 줘서(반도체 171개) 페이지를 넘긴다."""
+    codes, page = [], 1
+    while True:
+        d = _api_json(NAVER_GROUP_DETAIL_API.format(kind, no, page))
+        codes += [x["itemCode"] for x in d["stocks"]]
+        if not d["stocks"] or len(codes) >= d["totalCount"]:
+            break
+        page += 1
+    return list(dict.fromkeys(codes))
 
 
 def get_sector_map() -> dict:
     """네이버 업종 분류 → {종목코드: 업종명}. 실패 시 빈 dict(섹터 없이 진행)."""
     try:
-        html = _naver_get(NAVER_GROUP_URL)
+        groups = _naver_groups("industry")
     except Exception as e:
         print(f"[경고] 업종 목록 조회 실패: {e!r}", file=sys.stderr)
         return {}
-    groups = re.findall(
-        r"sise_group_detail\.naver\?type=upjong&no=(\d+)\">([^<]+)</a>", html
-    )
     if not groups:
-        print("[경고] 업종 목록 파싱 실패 (네이버 페이지 구조 변경 가능)", file=sys.stderr)
+        print("[경고] 업종 목록이 비었습니다 (네이버 API 변경 가능)", file=sys.stderr)
         return {}
 
     def fetch(item):
         no, name = item
         try:
-            return name, re.findall(
-                r"/item/main\.naver\?code=(\d{6})", _naver_get(NAVER_DETAIL_URL.format(no))
-            )
+            return name, _naver_group_codes("industry", no)
         except Exception:
             return name, None
 
@@ -173,87 +197,99 @@ def get_sector_map() -> dict:
 
 def get_themes() -> list:
     """[{name, total, codes}] — codes는 나중에 통과 종목만 남긴다. 실패 시 빈 리스트."""
-    pairs = []
-    for page in range(1, THEME_PAGES + 1):
-        try:
-            html = _naver_get(NAVER_THEME_LIST_URL.format(page))
-        except Exception:
-            continue
-        pairs += re.findall(
-            r"/sise/sise_group_detail\.naver\?type=theme&no=(\d+)\">([^<]+)</a>", html
-        )
-    pairs = list(dict.fromkeys(pairs))
-    if not pairs:
+    try:
+        groups = _naver_groups("theme")
+    except Exception as e:
+        print(f"[경고] 테마 목록 조회 실패: {e!r}", file=sys.stderr)
+        return []
+    if not groups:
         print("[경고] 테마 목록을 받지 못했습니다", file=sys.stderr)
         return []
 
     def fetch(item):
         no, name = item
         try:
-            codes = re.findall(
-                r"/item/main\.naver\?code=(\d{6})",
-                _naver_get(NAVER_THEME_DETAIL_URL.format(no)),
-            )
-            return name, list(dict.fromkeys(codes))
+            return name, _naver_group_codes("theme", no)
         except Exception:
             return name, None
 
     out, failed = [], 0
     with ThreadPoolExecutor(max_workers=8) as ex:
-        for name, codes in ex.map(fetch, pairs):
+        for name, codes in ex.map(fetch, groups):
             if codes is None:
                 failed += 1
                 continue
             out.append({"name": name, "total": len(codes), "codes": codes})
-    print(f"테마 분류: {len(out)}/{len(pairs)}개 테마 수집 (실패 {failed})")
+    print(f"테마 분류: {len(out)}/{len(groups)}개 테마 수집 (실패 {failed})")
     return out
 
 
-def _parse_report_page(page: int):
-    """리포트 목록 한 페이지 → [{code,title,broker,date,pdf,nid}]. 실패 시 None."""
+def _report_page(page: int):
+    """리포트 목록 한 페이지(200건, 최신순). 실패 시 None."""
     try:
-        html = _naver_get(REPORT_LIST_URL.format(page))
+        return _api_json(REPORT_LIST_API.format(page))
     except Exception:
         return None
-    out = []
-    for row in re.findall(r"<tr>(.*?)</tr>", html, re.S):
-        m = re.search(r"/item/main\.naver\?code=(\d{6})", row)
-        if not m:
-            continue
-        cells = [re.sub(r"<[^>]+>", "", c).strip()
-                 for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)]
-        if len(cells) < 5:
-            continue
-        nid = re.search(r"company_read\.naver\?nid=(\d+)", row)
-        pdf = re.search(r'href="(https://stock\.pstatic\.net[^"]+\.pdf)"', row)
-        out.append({
-            "code": m.group(1), "title": cells[1], "broker": cells[2], "date": cells[4],
-            "pdf": pdf.group(1) if pdf else None, "nid": nid.group(1) if nid else None,
-        })
-    return out
+
+
+def _report_pdf(nid: str):
+    try:
+        return nid, _api_json(REPORT_DETAIL_API.format(nid))["researchContent"].get("attachUrl")
+    except Exception:
+        return nid, ""      # 조회 실패 → 다음 실행에서 다시 시도
 
 
 def get_reports(codes: set) -> dict:
-    """종목코드별 최신 리포트. 실패해도 스크리닝은 계속되도록 빈 dict를 돌려준다."""
-    by_code = defaultdict(list)
-    failed = 0
+    """종목코드별 최신 리포트. 실패해도 스크리닝은 계속되도록 빈 dict를 돌려준다.
+
+    목록 API에는 PDF 링크가 없고 리포트별 상세에만 있다. 매번 1만 건씩 상세를
+    부르지 않도록 직전 reports.json에서 PDF를 물려받고 처음 보는 리포트만 상세를
+    부른다(평소 하루 수십 건). pdf 값은 셋 중 하나다 —
+    링크 = 있음 / None = 원래 없음(약 12%) / "" = 아직 못 봄 → 다음 실행에서 다시 조회.
+    프론트는 셋 다 그대로 쓴다: 빈 값이면 리포트 페이지 링크로 대신 연다.
+    """
+    known = {}
+    if REPORT_PATH.exists():
+        try:
+            prev = json.loads(REPORT_PATH.read_text(encoding="utf-8")).get("reports", {})
+            known = {r["nid"]: r.get("pdf") for rs in prev.values() for r in rs
+                     if r.get("nid") and r.get("pdf") != ""}
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            pass
+
+    rows, failed = [], 0
     with ThreadPoolExecutor(max_workers=8) as ex:
-        for res in ex.map(_parse_report_page, range(1, REPORT_PAGES + 1)):
+        for res in ex.map(_report_page, range(1, REPORT_PAGES + 1)):
             if res is None:
                 failed += 1
                 continue
-            for r in res:
-                if r["code"] in codes:
-                    by_code[r["code"]].append(r)
+            rows += [x for x in res if x.get("itemCode") in codes]
     if failed == REPORT_PAGES:
         print("[경고] 리포트 목록을 한 건도 받지 못했습니다", file=sys.stderr)
         return {}
+
+    need = list(dict.fromkeys(str(x["researchId"]) for x in rows
+                              if str(x["researchId"]) not in known))
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for nid, pdf in ex.map(_report_pdf, need[:REPORT_DETAIL_MAX]):
+            known[nid] = pdf
+    if len(need) > REPORT_DETAIL_MAX:
+        print(f"[경고] PDF 상세 {len(need)}건 중 {REPORT_DETAIL_MAX}건만 조회 — "
+              f"나머지는 다음 실행에서 이어 받는다", file=sys.stderr)
+
     # 목록이 최신순이라 그대로 담으면 최근 것이 위에 온다
-    out = {c: [{k: v for k, v in r.items() if k != "code"} for r in rs]
-           for c, rs in by_code.items()}
+    out = defaultdict(list)
+    for x in rows:
+        nid = str(x["researchId"])
+        out[x["itemCode"]].append({
+            "title": x["title"], "broker": x["brokerName"],
+            "date": x["writeDate"][2:].replace("-", "."),  # 2026-09-11 → 26.09.11 (기존 표기)
+            "pdf": known.get(nid, ""), "nid": nid,
+        })
+    out = dict(out)
     total = sum(len(v) for v in out.values())
-    print(f"리포트: {REPORT_PAGES - failed}/{REPORT_PAGES}페이지, "
-          f"{len(out)}종목 커버, {total}건")
+    print(f"리포트: {REPORT_PAGES - failed}/{REPORT_PAGES}페이지, {len(out)}종목 커버, "
+          f"{total}건 (PDF 상세 {min(len(need), REPORT_DETAIL_MAX)}건 새로 조회)")
     return out
 
 
